@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
 const API_BASE = "http://localhost:5000";
-// const API_BASE = "https://attendtrack-backend-8ggg.onrender.com";
 const BTN_SIZE = 76;
 const RADIUS = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
