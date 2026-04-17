@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     cleartext: true,
-    allowNavigation: ["192.168.2.107"]
+    allowNavigation: ["100.83.250.58"]
   }
 };
 
