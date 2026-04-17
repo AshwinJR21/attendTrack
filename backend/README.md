@@ -41,8 +41,17 @@ All sensitive data is handled via Environment Variables:
 
 ---
 
-## 📜 Requirements
-- `Flask`: API Framework.
-- `google-api-python-client`: Drive & Sheets interaction.
-- `python-dotenv`: Secure configuration.
-- `apscheduler`: Managing time-based rollovers.
+## 🚀 Installation & Setup
+
+1. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Configure Environment**:
+   Create a `.env` file based on `.env.example`.
+
+3. **Run the Server**:
+   ```bash
+   python app.py
+   ```
