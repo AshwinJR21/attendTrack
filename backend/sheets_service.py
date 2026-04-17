@@ -228,15 +228,14 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
 # 1. APPEND ATTENDANCE LOG ROW
 #    Row format: [emp_id, name, timestamp, "IN"/"OUT", location]
 # =========================
-def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, year=None, manual_timestamp=None):
+def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, year=None):
     if sheet_name is None:
         sheet_name = get_current_sheet_name()
     
     spreadsheet_id = get_yearly_spreadsheet_id(year)
     ensure_sheet_exists(sheet_name, spreadsheet_id)
 
-    # Use manual_timestamp if provided (for offline sync), else generate now
-    timestamp = manual_timestamp if manual_timestamp else get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
     
     row = [emp_id, name, timestamp, tag.upper(), location]
     body = {"values": [row]}

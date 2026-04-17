@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
-const API_BASE = "http://192.168.2.107:5000";
+const API_BASE = "http://localhost:5000";
 const BTN_SIZE = 76;
 const RADIUS = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -13,16 +13,6 @@ interface Employee {
   current_status: "IN" | "OUT";
   since?: string;
 }
-
-interface PendingAction {
-  id: string; // unique browser-side ID
-  employee_id: string;
-  employee_name: string;
-  action: "in" | "out";
-  client_timestamp: string;
-}
-
-const SYNC_KEY = "attendtrack_pending_sync";
 
 function parseSince(ts?: string): Date | null {
   if (!ts) return null;
@@ -241,18 +231,7 @@ export default function App() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [pendingSync, setPendingSync] = useState<PendingAction[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(SYNC_KEY) || "[]");
-    } catch { return []; }
-  });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isSyncing = useRef(false);
-
-  // Persist queue to localStorage
-  useEffect(() => {
-    localStorage.setItem(SYNC_KEY, JSON.stringify(pendingSync));
-  }, [pendingSync]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -286,42 +265,6 @@ export default function App() {
     } catch { /* silent */ }
   }, []);
 
-// Background Sync Worker
-  const processQueue = useCallback(async () => {
-    if (isSyncing.current || pendingSync.length === 0 || !navigator.onLine) return;
-    isSyncing.current = true;
-
-    const toProcess = [...pendingSync];
-    const successfulIds: string[] = [];
-
-    for (const action of toProcess) {
-      try {
-        const res = await fetch(`${API_BASE}/attendance`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(action),
-        });
-        if (res.ok) successfulIds.push(action.id);
-      } catch { break; } // stop processing if network fails again
-    }
-
-    if (successfulIds.length > 0) {
-      setPendingSync((prev) => prev.filter((a) => !successfulIds.includes(a.id)));
-      fetchEmployees();
-      fetchTodayMinutes();
-    }
-    isSyncing.current = false;
-  }, [pendingSync, fetchEmployees, fetchTodayMinutes]);
-
-  useEffect(() => {
-    const id = setInterval(processQueue, 30_000); // retry every 30s
-    window.addEventListener("online", processQueue);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener("online", processQueue);
-    };
-  }, [processQueue]);
-
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
   useEffect(() => {
     fetchTodayMinutes();
@@ -332,30 +275,25 @@ export default function App() {
   const handleToggle = async (emp: Employee) => {
     if (actionLoading) return;
     const action = emp.current_status === "IN" ? "out" : "in";
-    const ts = new Date().toLocaleString("sv-SE").replace("T", " "); // YYYY-MM-DD HH:MM:SS
-
-    // 1. Optimistic UI Update
-    setEmployees((prev) =>
-      prev.map((e) => (e.id === emp.id ? { ...e, current_status: action.toUpperCase() as "IN" | "OUT", since: ts } : e))
-    );
-
-    const pendingItem: PendingAction = {
-      id: Math.random().toString(36).substr(2, 9),
-      employee_id: emp.id,
-      employee_name: emp.name,
-      action: action as "in" | "out",
-      client_timestamp: ts
-    };
-
-    // 2. Add to Queue
-    setPendingSync(prev => [...prev, pendingItem]);
-
-    // 3. Trigger immediate sync attempt if online
-    if (navigator.onLine) {
-       setTimeout(processQueue, 100);
-    } else {
-       showToast("Offline: Log saved and will sync later", "success");
-    }
+    setActionLoading(emp.id);
+    try {
+      const res = await fetch(`${API_BASE}/attendance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employee_id: emp.id, employee_name: emp.name, action }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setEmployees((prev) =>
+          prev.map((e) => e.id === emp.id
+            ? { ...e, current_status: data.current_status, since: data.timestamp }
+            : e)
+        );
+        fetchTodayMinutes(); // refresh totals after toggle
+        showToast(data.message, "success");
+      } else showToast(data.message || "Something went wrong", "error");
+    } catch { showToast("Network error. Please try again.", "error"); }
+    finally { setActionLoading(null); }
   };
 
   const nowDate = new Date(now);
@@ -376,12 +314,6 @@ export default function App() {
             <div className="date-time">
               <span className="date">{dateStr}</span>
               <span className="time">{timeStr}</span>
-              {pendingSync.length > 0 && (
-                <div className="sync-badge" title={`${pendingSync.length} items waiting to sync`}>
-                  <span className="sync-icon">🔄</span>
-                  {pendingSync.length} Pending
-                </div>
-              )}
             </div>
           </div>
           <div className="stats-bar">

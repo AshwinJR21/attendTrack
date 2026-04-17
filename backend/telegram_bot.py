@@ -36,15 +36,6 @@ def handle_webhook(update):
     chat_id = msg["chat"]["id"]
     user_id = str(msg["from"]["id"])
     text = msg.get("text", "").strip()
-    
-    # Extract original message date (Unix timestamp) and convert to IST string
-    msg_unix = msg.get("date")
-    ist_ts = None
-    if msg_unix:
-        # Convert Unix (UTC) to IST (+5:30)
-        utc_dt = datetime.fromtimestamp(msg_unix, timezone.utc)
-        ist_dt = utc_dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
-        ist_ts = ist_dt.strftime("%Y-%m-%d %H:%M:%S")
 
     # --- ADMIN LOGIC ---
     if str(chat_id) == str(ADMIN_CHAT_ID):
@@ -74,11 +65,11 @@ def handle_webhook(update):
         return
 
     if text == "/in":
-        handle_attendance(chat_id, user_id, "IN", ist_ts)
+        handle_attendance(chat_id, user_id, "IN")
         return
 
     if text == "/out":
-        handle_attendance(chat_id, user_id, "OUT", ist_ts)
+        handle_attendance(chat_id, user_id, "OUT")
         return
 
     if text.startswith("/wfh"):
@@ -102,7 +93,7 @@ def handle_register(chat_id, user_id, text):
     else:
         send_message(chat_id, "❌ Invalid Employee ID. Please check and try again.")
 
-def handle_attendance(chat_id, user_id, tag, manual_ts=None):
+def handle_attendance(chat_id, user_id, tag):
     emp = get_employee_by_tg_id(user_id)
     if not emp:
         send_message(chat_id, "⚠️ Please register first using /register <EMP_ID>")
@@ -117,7 +108,7 @@ def handle_attendance(chat_id, user_id, tag, manual_ts=None):
     emp_id = emp.get("employee_id", emp.get("id"))
     emp_name = emp.get("name")
     
-    timestamp = append_attendance(emp_id, emp_name, tag, location="Home", manual_timestamp=manual_ts)
+    timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
     send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
 
 def handle_wfh_request(chat_id, user_id, text):
