@@ -80,9 +80,10 @@ def employees():
 @app.route("/attendance", methods=["POST"])
 def attendance():
     data = request.json
-    emp_id   = data.get("employee_id")
-    emp_name = data.get("employee_name", "")
-    action   = data.get("action", "").lower()
+    emp_id           = data.get("employee_id")
+    emp_name         = data.get("employee_name", "")
+    action           = data.get("action", "").lower()
+    client_timestamp = data.get("client_timestamp")
 
     if not emp_id or action not in ("in", "out"):
         return jsonify({"message": "Missing or invalid employee_id / action"}), 400
@@ -91,7 +92,10 @@ def attendance():
     tag        = action.upper()
     location   = data.get("location", "Office")
 
-    timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
+    timestamp = append_attendance(
+        emp_id, emp_name, tag, location, sheet_name, 
+        manual_timestamp=client_timestamp
+    )
 
     return jsonify({
         "message": f"Checked {tag} at {timestamp}",
