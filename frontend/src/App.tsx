@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
-const API_BASE = "http://192.168.2.107:5000";
+const API_BASE = "http://10.18.187.159:5000";
 const BTN_SIZE = 76;
 const RADIUS = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
