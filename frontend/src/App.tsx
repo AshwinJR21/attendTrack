@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
-const API_BASE = "http://10.18.187.159:5000";
+const API_BASE = "http://192.168.2.107:5000";
 const BTN_SIZE = 76;
 const RADIUS = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -247,11 +247,10 @@ export default function App() {
   const fetchEmployees = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/employees`);
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data = await res.json();
       setEmployees(data.employees || []);
-    } catch (err: any) {
-      showToast(`Fetch Error: ${err.message || err}`, "error");
+    } catch {
+      showToast("Failed to load employees", "error");
     } finally {
       setLoading(false);
     }
