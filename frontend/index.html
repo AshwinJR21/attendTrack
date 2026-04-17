@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>frontend</title>
+    <script>
+      function applyZoom() {
+        var desktopW = 1250;
+        var desktopH = 900;
+        // Calculate exact scale factor required to fit content within device screen without scrolling
+        var scale = Math.min(window.innerWidth / desktopW, window.innerHeight / desktopH, 1);
+        
+        // Native zoom provides flawless rendering engine scaling without absolute-positioning CSS hacks
+        document.body.style.zoom = scale;
+      }
+      window.addEventListener('resize', applyZoom);
+      window.addEventListener('orientationchange', applyZoom);
+      window.addEventListener('DOMContentLoaded', applyZoom);
+      applyZoom();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

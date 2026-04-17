@@ -1,0 +1,674 @@
+/* =============================================
+   GLOBAL RESET & FONTS
+   ============================================= */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface2: #111111;
+  --border: rgba(255, 255, 255, 0.09);
+  --text: #e2e8f0;
+  --text-muted: #8892a4;
+  --in-color: #22c55e;
+  --in-glow: rgba(34, 197, 94, 0.35);
+  --in-ring: rgba(34, 197, 94, 0.6);
+  --out-color: #ef4444;
+  --out-glow: rgba(239, 68, 68, 0.3);
+  --out-ring: rgba(239, 68, 68, 0.55);
+  --accent: #6366f1;
+  --radius: 20px;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Reliable full-viewport height chain: html → body → #root → all 100% */
+html {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  overflow: hidden; /* prevents layout scrollbars from scaled element original dimensions */
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  border-inline: none;
+  background: transparent;
+  text-align: left;
+}
+
+/* =============================================
+   HEADER
+   ============================================= */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(20px);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.logo-icon {
+  font-size: 24px;
+}
+
+.logo-text {
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.3px;
+}
+
+.date-time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.date {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.time {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Stats Bar */
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 50px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+}
+
+.stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-in {
+  background: var(--in-color);
+  box-shadow: 0 0 6px var(--in-color);
+}
+
+.dot-out {
+  background: var(--out-color);
+  box-shadow: 0 0 6px var(--out-color);
+}
+
+.stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.stat-count {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 20px;
+  text-align: center;
+}
+
+.refresh-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.refresh-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  transform: rotate(90deg);
+}
+
+/* =============================================
+   APP BODY — two-column split layout
+   ============================================= */
+.app-body {
+  position: fixed;
+  inset: 0;
+  top: 68px;                  /* header height */
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.left-panel {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+}
+
+.right-panel {
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+}
+
+/* =============================================
+   HISTORY TABLE
+   ============================================= */
+.history-panel {
+  width: 100%;
+  max-width: 720px;
+}
+
+.history-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--text-muted);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+.history-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  transition: opacity 0.2s ease;
+}
+
+.table-loading {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.history-table thead tr {
+  border-bottom: 1px solid var(--border);
+}
+
+.history-table th {
+  padding: 10px 24px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ht-date {
+  text-align: center !important;
+  display: table-cell;
+}
+
+.history-table tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.15s ease;
+}
+
+.history-table tbody tr:hover {
+  background: var(--surface2);
+}
+
+.ht-name-cell {
+  padding: 10px 24px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ht-mins-cell {
+  padding: 10px 24px;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mins-good { color: var(--in-color); }
+.mins-zero { color: var(--text-muted); }
+
+.hist-arrow {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+  margin: 0 6px;
+}
+
+.hist-arrow:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(99,102,241,0.1);
+}
+
+.hist-arrow:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+
+/* =============================================
+   EMPLOYEE GRID — 4 per row
+   ============================================= */
+.employee-grid {
+  display: grid;
+  /* Fixed 4 columns, slightly narrower max width */
+  grid-template-columns: repeat(4, minmax(0, 130px));
+  gap: 48px 56px;   /* ← increased horizontal column gap */
+  justify-content: center;
+  align-content: center;
+  width: 100%;
+}
+
+/* Removed mobile media queries for fixed 1200px scaling */
+
+/* =============================================
+   EMPLOYEE CARD
+   ============================================= */
+.employee-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 140px;
+}
+
+/* =============================================
+   CIRCULAR BUTTON — 3D effect  (88px, down from 110px)
+   ============================================= */
+.circle-btn {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Inter", sans-serif;
+  color: #fff;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+  overflow: visible;
+}
+
+/* IN state — green */
+.circle-btn.status-in {
+  background: radial-gradient(circle at 35% 35%, #4ade80, #16a34a 60%, #15803d);
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--in-ring),
+    0 12px 28px var(--in-glow),
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.25),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* OUT state — red */
+.circle-btn.status-out {
+  background: radial-gradient(circle at 35% 35%, #f87171, #dc2626 60%, #b91c1c);
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--out-ring),
+    0 12px 28px var(--out-glow),
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.2),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.35);
+}
+
+.circle-btn:hover:not(:disabled) {
+  transform: translateY(-4px) scale(1.05);
+}
+
+.circle-btn.status-in:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--in-ring),
+    0 18px 40px var(--in-glow),
+    0 6px 16px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.3),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
+}
+
+.circle-btn.status-out:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--out-ring),
+    0 18px 40px var(--out-glow),
+    0 6px 16px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.25),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.25);
+}
+
+.circle-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+}
+
+.circle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Top highlight for 3D effect */
+.circle-btn::before {
+  content: "";
+  position: absolute;
+  top: 12%;
+  left: 20%;
+  width: 40%;
+  height: 30%;
+  background: radial-gradient(ellipse, rgba(255, 255, 255, 0.35) 0%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* =============================================
+   TIMER SVG — fills the button
+   ============================================= */
+.timer-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  z-index: 1;
+}
+
+/* Minute layout in center of button */
+.btn-time-display {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.btn-minutes-num {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: #fff;
+  line-height: 1;
+}
+
+.btn-mins-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.8);
+  margin-top: -2px;
+}
+
+/* Initials (kept for loading fallback compatibility) */
+.btn-initials {
+  position: relative;
+  z-index: 1;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  user-select: none;
+}
+
+/* Status badge */
+.status-badge {
+  position: absolute;
+  bottom: 0px;
+  right: -2px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  z-index: 2;
+  text-shadow: none;
+}
+
+.badge-in {
+  background: rgba(0, 0, 0, 0.35);
+  color: #bbf7d0;
+}
+
+.badge-out {
+  background: rgba(0, 0, 0, 0.35);
+  color: #fecaca;
+}
+
+/* Loading spinner inside button */
+.btn-loading {
+  opacity: 0.8;
+}
+
+.btn-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* =============================================
+   EMPLOYEE NAME & STATUS TEXT
+   ============================================= */
+.emp-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  width: 100%;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+  letter-spacing: -0.3px;
+}
+
+.emp-total-today {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: 0.1px;
+  opacity: 0.9;
+}
+
+.text-in {
+  color: var(--in-color);
+}
+
+.text-out {
+  color: var(--text-muted);
+}
+
+/* =============================================
+   LOADING / EMPTY STATES
+   ============================================= */
+.loading-state,
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  min-height: 300px;
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid var(--surface2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.empty-icon {
+  font-size: 48px;
+}
+
+/* =============================================
+   TOAST NOTIFICATION
+   ============================================= */
+.toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 24px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: slide-up 0.3s ease;
+  z-index: 999;
+  white-space: nowrap;
+  max-width: 90vw;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.toast-success {
+  background: linear-gradient(135deg, #166534, #15803d);
+  border: 1px solid #22c55e55;
+  color: #dcfce7;
+}
+
+.toast-error {
+  background: linear-gradient(135deg, #7f1d1d, #991b1b);
+  border: 1px solid #ef444455;
+  color: #fee2e2;
+}
+
+/* =============================================
+   ANIMATIONS
+   ============================================= */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
