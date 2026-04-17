@@ -245,15 +245,12 @@ export default function App() {
   };
 
   const fetchEmployees = useCallback(async () => {
-    const targetUrl = `${API_BASE}/employees`;
     try {
-      const res = await fetch(targetUrl);
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const res = await fetch(`${API_BASE}/employees`);
       const data = await res.json();
       setEmployees(data.employees || []);
-    } catch (err: any) {
-      // Show the exact URL and error to find out what's wrong
-      showToast(`Fetch Error on [${targetUrl}]: ${err.message || err}`, "error");
+    } catch {
+      showToast("Failed to load employees", "error");
     } finally {
       setLoading(false);
     }
