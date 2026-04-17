@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
   appName: 'AttendTrack',
   webDir: 'dist',
   server: {
-    cleartext: true
+    cleartext: true,
+    allowNavigation: ["192.168.2.107"]
   }
 };
 
