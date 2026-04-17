@@ -83,4 +83,4 @@ This project is licensed under the **MIT License** - see the [LICENSE](./LICENSE
 
 ## ✨ Credits
 
-Developed with ❤️ by Ashwin.
+Developed with ❤️ by Harish and Ashwin, at Angles3D.
