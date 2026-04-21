@@ -200,29 +200,31 @@ body {
    APP BODY — two-column split layout
    ============================================= */
 .app-body {
-  position: fixed;
+  position: absolute;
   inset: 0;
   top: 68px;                  /* header height */
+  bottom: 0;
   z-index: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 3fr; /* Give more space to the grid if needed */
+  overflow: hidden;
 }
 
 .left-panel {
-  overflow-y: auto;
   border-right: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px 24px;
+  padding: 12px 16px;
+  overflow: hidden;
 }
 
 .right-panel {
-  overflow-y: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px 24px;
+  padding: 12px 16px;
+  overflow: hidden;
 }
 
 /* =============================================
@@ -234,16 +236,16 @@ body {
 }
 
 .history-title {
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.3px;
-  margin-bottom: 20px;
-  padding-bottom: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .title-spinner {
@@ -278,8 +280,8 @@ body {
 }
 
 .history-table th {
-  padding: 10px 24px;
-  font-size: 13px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -294,7 +296,7 @@ body {
 }
 
 .history-table tbody tr {
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.02);
   transition: background 0.15s ease;
 }
 
@@ -303,17 +305,19 @@ body {
 }
 
 .ht-name-cell {
-  padding: 10px 24px;
+  padding: 6px 12px;
   color: var(--text);
   font-weight: 500;
   white-space: nowrap;
+  font-size: 13px;
 }
 
 .ht-mins-cell {
-  padding: 10px 24px;
+  padding: 6px 12px;
   text-align: center;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  font-size: 13px;
 }
 
 .mins-good { color: var(--in-color); }
@@ -353,12 +357,21 @@ body {
    ============================================= */
 .employee-grid {
   display: grid;
-  /* Fixed 4 columns, slightly narrower max width */
-  grid-template-columns: repeat(4, minmax(0, 130px));
-  gap: 48px 56px;   /* ← increased horizontal column gap */
+  grid-auto-flow: column;
+  grid-template-rows: repeat(4, 1fr);
+  /* Adjust gaps and sizes based on viewport height and employee count */
+  gap: clamp(10px, 3.5vh, 40px) clamp(10px, 2.5vw, 60px);
   justify-content: center;
   align-content: center;
   width: 100%;
+  height: 100%;
+  padding: 10px;
+
+  /* Dynamically scale children based on how many columns we have */
+  --cols: ceil(calc(var(--emp-count) / 4));
+  --scale-factor: clamp(0.5, calc(30 / (var(--emp-count) + 10)), 1);
+  --grid-btn-size: clamp(60px, calc(18vh * var(--scale-factor)), 100px);
+  --grid-font-size: clamp(12px, calc(3vh * var(--scale-factor)), 22px);
 }
 
 /* Removed mobile media queries for fixed 1200px scaling */
@@ -370,9 +383,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  width: 100%;
-  max-width: 140px;
+  gap: clamp(4px, 1.5vh, 16px);
+  width: auto;
+  min-width: 80px;
 }
 
 /* =============================================
@@ -380,8 +393,8 @@ body {
    ============================================= */
 .circle-btn {
   position: relative;
-  width: 88px;
-  height: 88px;
+  width: var(--grid-btn-size);
+  height: var(--grid-btn-size);
   border-radius: 50%;
   border: none;
   cursor: pointer;
@@ -390,11 +403,10 @@ body {
   justify-content: center;
   font-family: "Inter", sans-serif;
   color: #fff;
-  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, width 0.3s ease, height 0.3s ease;
   outline: none;
   -webkit-tap-highlight-color: transparent;
   padding: 0;
-  overflow: visible;
 }
 
 /* IN state — green */
@@ -493,7 +505,7 @@ body {
 }
 
 .btn-minutes-num {
-  font-size: 22px;
+  font-size: calc(var(--grid-btn-size) * 0.25);
   font-weight: 800;
   letter-spacing: -0.5px;
   color: #fff;
@@ -501,7 +513,7 @@ body {
 }
 
 .btn-mins-label {
-  font-size: 11px;
+  font-size: calc(var(--grid-btn-size) * 0.12);
   font-weight: 700;
   color: rgba(255, 255, 255, 0.8);
   margin-top: -2px;
@@ -560,16 +572,16 @@ body {
    EMPLOYEE NAME & STATUS TEXT
    ============================================= */
 .emp-name {
-  font-size: 22px;
+  font-size: var(--grid-font-size);
   font-weight: 700;
   color: var(--text);
   text-align: center;
   width: 100%;
-  max-width: 140px;
+  max-width: calc(var(--grid-btn-size) * 1.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 1.3;
+  line-height: 1.2;
   letter-spacing: -0.3px;
 }
 

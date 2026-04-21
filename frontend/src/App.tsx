@@ -115,7 +115,7 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
                   onClick={() => setColBase((c) => c + 1)}
                   disabled={!canGoLeft}
                   title="Go further back"
-                >←</button>
+                >{"<"}</button>
                 {formatDateHeader(date1)}
               </th>
               <th className="ht-date">
@@ -125,7 +125,7 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
                   onClick={() => setColBase((c) => c - 1)}
                   disabled={!canGoRight}
                   title="Go forward"
-                >→</button>
+                >{">"}</button>
               </th>
             </tr>
           </thead>
@@ -338,7 +338,7 @@ export default function App() {
           ) : employees.length === 0 ? (
             <div className="empty-state"><span className="empty-icon">👥</span><p>No active employees found.</p></div>
           ) : (
-            <div className="employee-grid">
+            <div className="employee-grid" style={{ "--emp-count": employees.length } as React.CSSProperties}>
               {employees.map((emp) => (
                 <EmployeeCard
                   key={emp.id}
