@@ -108,8 +108,13 @@ def handle_attendance(chat_id, user_id, tag):
     emp_id = emp.get("employee_id", emp.get("id"))
     emp_name = emp.get("name")
     
-    timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
-    send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
+    try:
+        timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
+        send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
+    except ValueError as ve:
+        send_message(chat_id, f"❌ {str(ve)}")
+    except Exception as e:
+        send_message(chat_id, f"⚠️ An error occurred: {str(e)}")
 
 def handle_wfh_request(chat_id, user_id, text):
     emp = get_employee_by_tg_id(user_id)

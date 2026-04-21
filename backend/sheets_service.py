@@ -235,9 +235,30 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
     spreadsheet_id = get_yearly_spreadsheet_id(year)
     ensure_sheet_exists(sheet_name, spreadsheet_id)
 
+    tag_upper = tag.upper()
+    
+    # --- VALIDATION LAYER ---
+    last_punch = get_employee_last_punch(emp_id, sheet_name, year)
+    last_tag = last_punch["tag"] if last_punch else "OUT"
+
+    # 1. State transition validation (prevent double IN/OUT)
+    if tag_upper == last_tag:
+        raise ValueError(f"Action Invalid: You are already {tag_upper}.")
+
+    # 2. Location consistency validation (prevent cross-location OUT)
+    if tag_upper == "OUT":
+        # (At this point, last_punch MUST be an "IN" because if it were "OUT", 
+        # it would have been caught by the check above)
+        if last_punch and last_punch["location"] != location:
+            raise ValueError(
+                f"Location Mismatch: You punched IN from '{last_punch['location']}'. "
+                f"You must punch OUT from the same location (you tried '{location}')."
+            )
+    # -----------------------
+
     timestamp = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
     
-    row = [emp_id, name, timestamp, tag.upper(), location]
+    row = [emp_id, name, timestamp, tag_upper, location]
     body = {"values": [row]}
 
     retry_api(
@@ -249,6 +270,25 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
         ).execute()
     )
     return timestamp
+
+
+# =========================
+# 1b. GET LAST PUNCH FOR AN EMPLOYEE
+# =========================
+def get_employee_last_punch(emp_id, sheet_name=None, year=None):
+    """Retrieves the most recent punch data for an employee including location."""
+    rows = get_rows(sheet_name, year)
+    # Traverse from bottom → most recent entry first
+    for row in reversed(rows):
+        if len(row) < 4:
+            continue
+        if str(row[0]) == str(emp_id):
+            return {
+                "tag": row[3].upper(),
+                "location": row[4] if len(row) > 4 else "Office",
+                "timestamp": row[2]
+            }
+    return None
 
 
 # =========================
@@ -308,7 +348,11 @@ def get_all_statuses_bulk(sheet_name=None, year=None):
         tag = row[3].upper()
         timestamp = row[2] if len(row) > 2 else ""
         if tag in ("IN", "OUT"):
-            status_map[emp_id] = {"status": tag, "since": timestamp}
+            status_map[emp_id] = {
+                "status": tag,
+                "since": timestamp,
+                "location": row[4] if len(row) > 4 else "Office"
+            }
 
     return status_map
 
@@ -486,6 +530,7 @@ def midnight_rollover():
     new_spreadsheet_id = get_yearly_spreadsheet_id(new_year)
 
     out_ts = yesterday.strftime("%Y-%m-%d 23:59:59")
+    in_ts  = now.strftime("%Y-%m-%d 00:00:00")
 
     try:
         active_employees = get_active_employees()
@@ -514,11 +559,17 @@ def midnight_rollover():
     names = [e["name"] for e in employees_in]
     print(f"[Midnight Rollover] Rolling over {len(employees_in)} employees: {names}")
 
-    # 1. Batch-append OUT rows at 23:59:59 on the OLD spreadsheet
-    out_rows = [
-        [emp["id"], emp["name"], out_ts, "OUT", "Office"]
-        for emp in employees_in
-    ]
+    # Prepare batches
+    out_rows = []
+    in_rows = []
+    for emp in employees_in:
+        info = old_statuses.get(emp["id"], {})
+        loc = info.get("location", "Office")
+        
+        out_rows.append([emp["id"], emp["name"], out_ts, "OUT", loc])
+        in_rows.append([emp["id"], emp["name"], in_ts, "IN", loc])
+
+    # 1. Batch-append OUT rows to OLD spreadsheet
     retry_api(
         lambda: service.spreadsheets().values().append(
             spreadsheetId=old_spreadsheet_id,
@@ -527,6 +578,17 @@ def midnight_rollover():
             body={"values": out_rows},
         ).execute()
     )
+
+    # 2. Batch-append IN rows to NEW spreadsheet
+    retry_api(
+        lambda: service.spreadsheets().values().append(
+            spreadsheetId=new_spreadsheet_id,
+            range=f"'{new_sheet}'!A:E",
+            valueInputOption="RAW",
+            body={"values": in_rows},
+        ).execute()
+    )
+    print(f"[Midnight Rollover] Successfully rolled over {len(employees_in)} entries.")
 
 
 # =========================

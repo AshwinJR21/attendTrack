@@ -91,7 +91,14 @@ def attendance():
     tag        = action.upper()
     location   = data.get("location", "Office")
 
-    timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
+    try:
+        timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
+    except ValueError as ve:
+        return jsonify({"message": str(ve)}), 400
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"message": f"Server Error: {str(e)}"}), 500
 
     return jsonify({
         "message": f"Checked {tag} at {timestamp}",

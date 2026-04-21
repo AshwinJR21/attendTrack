@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import "./App.css";
 
-const API_BASE = "http://100.83.250.58:5000";
+// Use environment variable for backend URL, with the production Tailscale IP as a fallback
+const API_BASE = import.meta.env.VITE_API_BASE || "http://100.83.250.58:5000";
 const BTN_SIZE = 76;
 const RADIUS = 32;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
