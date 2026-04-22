@@ -13,6 +13,7 @@ interface Employee {
   status: string;
   current_status: "IN" | "OUT";
   since?: string;
+  location?: string;
 }
 
 function parseSince(ts?: string): Date | null {
@@ -164,29 +165,30 @@ interface CardProps {
 
 function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayCompleted }: CardProps) {
   const isIN = emp.current_status === "IN";
+  const isHome = isIN && emp.location === "Home";
   const sinceDate = parseSince(emp.since);
-
+  
   const todayMidnight = new Date(now);
   todayMidnight.setHours(0, 0, 0, 0);
   const midnightMs = todayMidnight.getTime();
-
+  
   const sinceMs = sinceDate ? Math.max(sinceDate.getTime(), midnightMs) : midnightMs;
   const hasSince = !!sinceDate;
-
+  
   // Minutes since last check-in/out (current session)
   const sessionMins = hasSince ? minutesElapsed(sinceMs, now) : 0;
   const progress = hasSince ? minuteProgress(sinceMs, now) : 0;
   const dashOffset = CIRCUMFERENCE * (1 - progress);
-
+  
   // Total today = completed sessions + ongoing session (if IN)
   const totalToday = getLiveTodayMins(emp, now, todayCompleted);
-
+  
   return (
     <div className="employee-card">
       <p className="emp-name">{emp.name}</p>
-
+  
       <button
-        className={`circle-btn ${isIN ? "status-in" : "status-out"} ${isLoading ? "btn-loading" : ""}`}
+        className={`circle-btn ${isHome ? "status-home" : (isIN ? "status-in" : "status-out")} ${isLoading ? "btn-loading" : ""}`}
         onClick={() => onToggle(emp)}
         disabled={anyLoading}
         style={{ width: BTN_SIZE, height: BTN_SIZE }}
@@ -210,14 +212,14 @@ function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayComplete
               <span className="btn-minutes-num">{hasSince ? sessionMins : "—"}</span>
               {hasSince && <span className="btn-mins-label">mins</span>}
             </div>
-            <span className={`status-badge ${isIN ? "badge-in" : "badge-out"}`}>
+            <span className={`status-badge ${isHome ? "badge-home" : (isIN ? "badge-in" : "badge-out")}`}>
               {emp.current_status}
             </span>
           </>
         )}
       </button>
 
-      <p className={`emp-total-today ${isIN ? "text-in" : "text-out"}`}>
+      <p className={`emp-total-today ${isHome ? "text-home" : (isIN ? "text-in" : "text-out")}`}>
         {formatDuration(totalToday)} worked today
       </p>
     </div>

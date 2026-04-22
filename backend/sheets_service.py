@@ -34,8 +34,9 @@ EMPLOYEE_MASTER_SHEET = "employee_master"
 WFH_REQUESTS_SHEET = "wfh_requests"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+_admin_raw = os.getenv("ADMIN_CHAT_ID", "").strip()
+ADMIN_IDS = [x.strip() for x in _admin_raw.split(",") if x.strip()]
 
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
@@ -133,11 +134,11 @@ def ensure_wfh_sheet_exists(spreadsheet_id):
         requests = [{"addSheet": {"properties": {"title": WFH_REQUESTS_SHEET}}}]
         retry_api(lambda: service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute())
         
-        # Add headers: [TG_ID, START, TO, ID, NAME]
-        headers = [["telegram_id", "from", "to", "employee_id", "name"]]
+        # Add headers: [TG_ID, START, TO, ID, NAME, STATUS]
+        headers = [["telegram_id", "from", "to", "employee_id", "name", "status"]]
         retry_api(lambda: service.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A1:E1",
+            range=f"'{WFH_REQUESTS_SHEET}'!A1:F1",
             valueInputOption="RAW",
             body={"values": headers}
         ).execute())
@@ -478,6 +479,11 @@ def has_approved_wfh(tg_id, target_date):
     for row in rows[1:]:
         if len(row) < 3: continue
         if str(row[0]) == str(tg_id):
+            # Check status if column exists, otherwise assume approved for old entries
+            status = row[5].lower() if len(row) > 5 else "approved"
+            if status != "approved":
+                continue
+                
             try:
                 start = datetime.strptime(row[1], "%Y-%m-%d").timestamp()
                 end = datetime.strptime(row[2], "%Y-%m-%d").timestamp()
@@ -485,6 +491,156 @@ def has_approved_wfh(tg_id, target_date):
                     return True
             except ValueError: continue
     return False
+
+def log_wfh_request(tg_id, start_date, end_date, status="pending"):
+    """Logs a new WFH request to the master spreadsheet with a status."""
+    emp = get_employee_by_tg_id(tg_id)
+    emp_id = emp.get("employee_id", emp.get("id", "Unknown")) if emp else "Unknown"
+    emp_name = emp.get("name", "Unknown") if emp else "Unknown"
+    
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    row = [str(tg_id), start_date, end_date, emp_id, emp_name, status]
+    retry_api(
+        lambda: service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F",
+            valueInputOption="RAW",
+            body={"values": [row]}
+        ).execute()
+    )
+
+def update_wfh_status(tg_id, start_date, end_date, new_status):
+    """Updates the status of an existing WFH request."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows: return
+    
+    # Headers: [tg_id, start, end, emp_id, name, status]
+    for i, row in enumerate(rows):
+        if len(row) < 3: continue
+        if (str(row[0]) == str(tg_id) and 
+            row[1] == start_date and 
+            row[2] == end_date):
+            
+            row_num = i + 1
+            retry_api(lambda: service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{WFH_REQUESTS_SHEET}'!F{row_num}",
+                valueInputOption="RAW",
+                body={"values": [[new_status]]}
+            ).execute())
+            return
+
+def cancel_wfh_for_date(emp_id, date_str):
+    """Cancels any approved WFH request for a specific employee and date."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows: return
+    
+    try:
+        target_ts = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
+    except ValueError:
+        return
+
+    # Headers: [tg_id, start, end, emp_id, name, status]
+    for i, row in enumerate(rows):
+        if len(row) < 4: continue
+        if str(row[3]) == str(emp_id):
+            status = row[5].lower() if len(row) > 5 else "approved"
+            if status != "approved":
+                continue
+                
+            try:
+                start = datetime.strptime(row[1], "%Y-%m-%d").timestamp()
+                end = datetime.strptime(row[2], "%Y-%m-%d").timestamp()
+                if start <= target_ts <= end:
+                    row_num = i + 1
+                    retry_api(lambda: service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=f"'{WFH_REQUESTS_SHEET}'!F{row_num}",
+                        valueInputOption="RAW",
+                        body={"values": [["invalid"]]}
+                    ).execute())
+                    print(f"[WFH] Invalidated approved WFH for {emp_id} on {date_str}")
+            except ValueError: continue
+
+def check_duplicate_wfh(tg_id, start_date):
+    """Returns (True, status) if a WFH request already exists for this user and start date."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows or len(rows) < 2: return False, None
+    
+    # Skip header
+    for row in rows[1:]:
+        if len(row) < 6: continue
+        # [tg_id, from, to, emp_id, name, status]
+        existing_tg_id = str(row[0])
+        existing_start = str(row[1])
+        status = str(row[5]).lower()
+        
+        if existing_tg_id == str(tg_id) and existing_start == start_date:
+            if status not in ["invalid", "expired"]:
+                return True, status
+    return False, None
+
+def get_pending_wfh_requests():
+    """Fetches all WFH requests with 'pending' status."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows or len(rows) < 2: return []
+    
+    pending = []
+    # Headers: [tg_id, from, to, emp_id, name, status]
+    for row in rows[1:]:
+        if len(row) < 6: continue
+        if row[5].lower() == "pending":
+            pending.append({
+                "tg_id": row[0],
+                "from": row[1],
+                "to": row[2],
+                "emp_id": row[3],
+                "name": row[4],
+                "status": row[5]
+            })
+    return pending
+
+def get_pending_wfh_count():
+    """Returns the number of pending WFH requests."""
+    return len(get_pending_wfh_requests())
 
 def add_wfh_approval(tg_id, start_date, end_date):
     """Adds a new approved WFH entry to the master spreadsheet."""
@@ -504,6 +660,48 @@ def add_wfh_approval(tg_id, start_date, end_date):
             body={"values": [row]}
         ).execute()
     )
+
+def cleanup_expired_wfh():
+    """Marks any WFH request as 'expired' if its end date has passed."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(lambda: service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+    ).execute())
+    rows = result.get("values", [])
+    if not rows or len(rows) < 2: return
+    
+    # Get IST today at midnight for comparison
+    today_dt = get_ist_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    updates = 0
+    # Headers: [tg_id, from, to, emp_id, name, status]
+    # Rows indices start from 1 in Sheets, row 1 is header
+    for i, row in enumerate(rows[1:], start=2):
+        if len(row) < 6: continue
+        end_date_str = row[2]
+        status = row[5].lower()
+        
+        if status in ["approved", "pending"]:
+            try:
+                # strptime returns naive datetime, we compare with today_dt (IST)
+                end_dt = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=IST_TZ)
+                if end_dt < today_dt:
+                    row_num = i
+                    retry_api(lambda: service.spreadsheets().values().update(
+                        spreadsheetId=spreadsheet_id,
+                        range=f"'{WFH_REQUESTS_SHEET}'!F{row_num}",
+                        valueInputOption="RAW",
+                        body={"values": [["expired"]]}
+                    ).execute())
+                    updates += 1
+            except ValueError:
+                continue
+    
+    if updates > 0:
+        print(f"[WFH Cleanup] Marked {updates} requests as expired.")
 
 
 # =========================
@@ -531,6 +729,12 @@ def midnight_rollover():
 
     out_ts = yesterday.strftime("%Y-%m-%d 23:59:59")
     in_ts  = now.strftime("%Y-%m-%d 00:00:00")
+
+    # Cleanup expired WFH requests first
+    try:
+        cleanup_expired_wfh()
+    except Exception as e:
+        print(f"[Midnight Rollover] ERROR during WFH cleanup: {e}")
 
     try:
         active_employees = get_active_employees()

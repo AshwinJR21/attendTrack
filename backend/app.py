@@ -14,6 +14,8 @@ from sheets_service import (
     midnight_rollover,
     compute_daily_minutes,
     get_ist_now,
+    cancel_wfh_for_date,
+    cleanup_expired_wfh,
 )
 from telegram_bot import handle_webhook
 
@@ -61,9 +63,10 @@ def employees():
         status_map = get_all_statuses_bulk(sheet_name)
 
         for emp in active_employees:
-            info = status_map.get(emp["id"], {"status": "OUT", "since": ""})
+            info = status_map.get(emp["id"], {"status": "OUT", "since": "", "location": "Office"})
             emp["current_status"] = info["status"]
             emp["since"] = info["since"]
+            emp["location"] = info.get("location", "Office")
 
         return jsonify({"employees": active_employees})
     except Exception as e:
@@ -93,6 +96,12 @@ def attendance():
 
     try:
         timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
+        
+        # WFH Cancellation Policy: If IN at Office, cancel any approved WFH for today
+        if tag == "IN" and location == "Office":
+            today_str = get_ist_now().strftime("%Y-%m-%d")
+            cancel_wfh_for_date(emp_id, today_str)
+            
     except ValueError as ve:
         return jsonify({"message": str(ve)}), 400
     except Exception as e:
@@ -138,6 +147,17 @@ def test_rollover():
     try:
         midnight_rollover()
         return jsonify({"message": "Midnight rollover executed. Check server logs and Google Sheet."})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/test-cleanup", methods=["GET"])
+def test_cleanup():
+    try:
+        cleanup_expired_wfh()
+        return jsonify({"message": "WFH expiration cleanup executed manually. Check server logs."})
     except Exception as e:
         import traceback
         traceback.print_exc()

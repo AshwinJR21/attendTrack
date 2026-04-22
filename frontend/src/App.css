@@ -24,6 +24,9 @@
   --out-color: #ef4444;
   --out-glow: rgba(239, 68, 68, 0.3);
   --out-ring: rgba(239, 68, 68, 0.55);
+  --home-color: #0ed7b5;
+  --home-glow: rgba(14, 215, 181, 0.35);
+  --home-ring: rgba(14, 215, 181, 0.6);
   --accent: #6366f1;
   --radius: 20px;
   font-family: "Inter", system-ui, sans-serif;
@@ -433,6 +436,18 @@ body {
     inset 0 -3px 6px rgba(0, 0, 0, 0.35);
 }
 
+/* HOME state — turquoise */
+.circle-btn.status-home {
+  background: radial-gradient(circle at 35% 35%, #5eead4, #0ed7b5 60%, #0d9488);
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--home-ring),
+    0 12px 28px var(--home-glow),
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.25),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.3);
+}
+
 .circle-btn:hover:not(:disabled) {
   transform: translateY(-4px) scale(1.05);
 }
@@ -455,6 +470,16 @@ body {
     0 6px 16px rgba(0, 0, 0, 0.5),
     inset 0 2px 4px rgba(255, 255, 255, 0.25),
     inset 0 -3px 6px rgba(0, 0, 0, 0.25);
+}
+
+.circle-btn.status-home:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 4px var(--bg),
+    0 0 0 7px var(--home-ring),
+    0 18px 40px var(--home-glow),
+    0 6px 16px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.3),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.2);
 }
 
 .circle-btn:active:not(:disabled) {
@@ -554,6 +579,11 @@ body {
   color: #fecaca;
 }
 
+.badge-home {
+  background: rgba(0, 0, 0, 0.35);
+  color: #99f6e4;
+}
+
 /* Loading spinner inside button */
 .btn-loading {
   opacity: 0.8;
@@ -599,6 +629,10 @@ body {
 
 .text-out {
   color: var(--text-muted);
+}
+
+.text-home {
+  color: var(--home-color);
 }
 
 /* =============================================
