@@ -362,11 +362,28 @@ export default function App() {
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
-  // Periodic polling for fresh employee statuses (every 120s)
+  // SSE connection for real-time updates and fallback polling
   useEffect(() => {
+    const sse = new EventSource(`${API_BASE}/stream`);
+    sse.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "attendance_update") {
+          fetchEmployees();
+          fetchTodayMinutes();
+        }
+      } catch (err) {
+        console.error("SSE parse error", err);
+      }
+    };
+    
+    // Fallback polling just in case SSE connection drops silently
     const id = setInterval(fetchEmployees, 120_000);
-    return () => clearInterval(id);
-  }, [fetchEmployees]);
+    return () => {
+      sse.close();
+      clearInterval(id);
+    };
+  }, [fetchEmployees, fetchTodayMinutes]);
 
   useEffect(() => {
     fetchTodayMinutes();

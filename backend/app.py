@@ -2,8 +2,10 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+import queue
+from event_bus import clients, notify_clients
 
 from sheets_service import (
     append_attendance,
@@ -107,6 +109,9 @@ def attendance():
                 daemon=True, name=f"WFH-cancel-{emp_id}"
             ).start()
             
+        notify_clients()
+
+            
     except ValueError as ve:
         return jsonify({"message": str(ve)}), 400
     except Exception as e:
@@ -181,6 +186,27 @@ def test_cleanup():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+# =========================
+# SSE STREAM
+# =========================
+@app.route("/stream")
+def stream():
+    def event_stream():
+        q = queue.Queue(maxsize=10)
+        clients.append(q)
+        try:
+            while True:
+                msg = q.get()
+                yield f"data: {msg}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            if q in clients:
+                clients.remove(q)
+                
+    return Response(event_stream(), mimetype="text/event-stream")
 
 
 # =========================

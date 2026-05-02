@@ -161,6 +161,8 @@ def handle_attendance(chat_id, user_id, tag):
     try:
         timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
         send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
+        from event_bus import notify_clients
+        notify_clients()
     except ValueError as ve:
         send_message(chat_id, f"❌ {html.escape(str(ve))}")
     except Exception as e:
