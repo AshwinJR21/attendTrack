@@ -1,7 +1,7 @@
 /* =============================================
    GLOBAL RESET & FONTS
    ============================================= */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+/* Font loaded non-blocking via <link> in index.html */
 
 *,
 *::before,
@@ -684,7 +684,20 @@ body {
 /* =============================================
    LOADING / EMPTY STATES
    ============================================= */
-.loading-state,
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  color: var(--text-muted);
+  font-size: 16px;
+  background: var(--bg);
+  z-index: 10;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -695,7 +708,6 @@ body {
   color: var(--text-muted);
   font-size: 16px;
 }
-
 .spinner {
   width: 44px;
   height: 44px;

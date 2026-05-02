@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>frontend</title>
+    <meta name="description" content="Real-time employee attendance tracking dashboard" />
+    <title>AttendTrack — Attendance Dashboard</title>
+
+    <!-- Preconnect to Google Fonts (eliminates DNS+TLS latency) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Non-blocking font load (was render-blocking @import in CSS) -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" media="print" onload="this.media='all'" />
+
+    <!-- Critical inline CSS: prevent white flash, show dark bg immediately -->
+    <style>
+      html, body, #root { margin: 0; padding: 0; height: 100%; background: #000; color: #e2e8f0; font-family: Inter, system-ui, sans-serif; }
+    </style>
+
     <script>
       function applyZoom() {
         var desktopW = 1250;
@@ -26,3 +39,4 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+

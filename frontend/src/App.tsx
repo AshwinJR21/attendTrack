@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import "./App.css";
 
 // Use environment variable for backend URL, with the production Tailscale IP as a fallback
@@ -203,6 +203,8 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
   );
 }
 
+const MemoHistoryTable = memo(HistoryTable);
+
 // ─── EmployeeCard ─────────────────────────────────────────────────────────────
 interface CardProps {
   emp: Employee;
@@ -240,7 +242,7 @@ function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayComplete
       <button
         className={`circle-btn ${isHome ? "status-home" : (isIN ? "status-in" : "status-out")} ${isLoading ? "btn-loading" : ""}`}
         onClick={() => onToggle(emp)}
-        disabled={anyLoading}
+        disabled={isLoading}
         style={{ width: BTN_SIZE, height: BTN_SIZE }}
         aria-label={`${emp.name} — ${emp.current_status}`}
       >
@@ -276,18 +278,49 @@ function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayComplete
   );
 }
 
+const MemoEmployeeCard = memo(EmployeeCard, (prev, next) => {
+  return (
+    prev.emp.id === next.emp.id &&
+    prev.emp.current_status === next.emp.current_status &&
+    prev.emp.since === next.emp.since &&
+    prev.emp.location === next.emp.location &&
+    prev.isLoading === next.isLoading &&
+    prev.anyLoading === next.anyLoading &&
+    prev.todayCompleted === next.todayCompleted &&
+    // Only re-render for time changes every 5s (coarse)
+    Math.floor(prev.now / 5000) === Math.floor(next.now / 5000)
+  );
+});
+
+// Preload: start fetching employees before React mounts (runs during JS parse)
+let _preloadedEmployees: Promise<Response> | null = fetch(`${API_BASE}/employees`);
+
+// Hydrate from localStorage for instant repeat-visit LCP
+function _getCachedEmployees(): Employee[] {
+  try {
+    const raw = localStorage.getItem("att_employees");
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function _setCachedEmployees(emps: Employee[]) {
+  try { localStorage.setItem("att_employees", JSON.stringify(emps)); } catch { /* ignore */ }
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const cachedEmps = _getCachedEmployees();
+  const [employees, setEmployees] = useState<Employee[]>(cachedEmps);
   const [todayCompleted, setTodayCompleted] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [loading, setLoading] = useState(cachedEmps.length === 0);
+  const [actionLoading, setActionLoading] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -299,9 +332,18 @@ export default function App() {
 
   const fetchEmployees = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/employees`);
+      // Consume the preloaded fetch on first call, then use normal fetch
+      let res: Response;
+      if (_preloadedEmployees) {
+        res = await _preloadedEmployees;
+        _preloadedEmployees = null;
+      } else {
+        res = await fetch(`${API_BASE}/employees`);
+      }
       const data = await res.json();
-      setEmployees(data.employees || []);
+      const emps = data.employees || [];
+      setEmployees(emps);
+      _setCachedEmployees(emps);
     } catch {
       showToast("Failed to load employees", "error");
     } finally {
@@ -319,6 +361,13 @@ export default function App() {
   }, []);
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
+
+  // Periodic polling for fresh employee statuses (every 120s)
+  useEffect(() => {
+    const id = setInterval(fetchEmployees, 120_000);
+    return () => clearInterval(id);
+  }, [fetchEmployees]);
+
   useEffect(() => {
     fetchTodayMinutes();
     const id = setInterval(fetchTodayMinutes, 60_000);
@@ -326,9 +375,9 @@ export default function App() {
   }, [fetchTodayMinutes]);
 
   const handleToggle = async (emp: Employee) => {
-    if (actionLoading) return;
+    if (actionLoading.has(emp.id)) return;
     const action = emp.current_status === "IN" ? "out" : "in";
-    setActionLoading(emp.id);
+    setActionLoading((prev) => new Set(prev).add(emp.id));
     try {
       const res = await fetch(`${API_BASE}/attendance`, {
         method: "POST",
@@ -342,11 +391,12 @@ export default function App() {
             ? { ...e, current_status: data.current_status, since: data.timestamp }
             : e)
         );
-        fetchTodayMinutes(); // refresh totals after toggle
         showToast(data.message, "success");
+        // Defer background re-fetches to avoid blocking the UI paint
+        setTimeout(() => { fetchTodayMinutes(); fetchEmployees(); }, 0);
       } else showToast(data.message || "Something went wrong", "error");
     } catch { showToast("Network error. Please try again.", "error"); }
-    finally { setActionLoading(null); }
+    finally { setActionLoading((prev) => { const next = new Set(prev); next.delete(emp.id); return next; }); }
   };
 
   const nowDate = new Date(now);
@@ -380,24 +430,25 @@ export default function App() {
       <div className="app-body">
         {/* LEFT — history table */}
         <div className="left-panel">
-          <HistoryTable employees={employees} now={now} todayCompleted={todayCompleted} />
+          <MemoHistoryTable employees={employees} now={now} todayCompleted={todayCompleted} />
         </div>
 
         {/* RIGHT — live employee grid */}
-        <div className="right-panel">
-          {loading ? (
-            <div className="loading-state"><div className="spinner" /><p>Loading…</p></div>
-          ) : employees.length === 0 ? (
+        <div className="right-panel" style={{ position: "relative" }}>
+          {loading && (
+            <div className="loading-overlay"><div className="spinner" /><p>Loading…</p></div>
+          )}
+          {!loading && employees.length === 0 ? (
             <div className="empty-state"><span className="empty-icon">👥</span><p>No active employees found.</p></div>
           ) : (
-            <div className="employee-grid" style={{ "--emp-count": employees.length } as React.CSSProperties}>
+            <div className="employee-grid" style={{ "--emp-count": employees.length, opacity: loading ? 0 : 1, transition: "opacity 0.2s ease" } as React.CSSProperties}>
               {employees.map((emp) => (
-                <EmployeeCard
+                <MemoEmployeeCard
                   key={emp.id}
                   emp={emp}
                   now={now}
-                  isLoading={actionLoading === emp.id}
-                  anyLoading={!!actionLoading}
+                  isLoading={actionLoading.has(emp.id)}
+                  anyLoading={actionLoading.size > 0}
                   onToggle={handleToggle}
                   todayCompleted={todayCompleted[emp.id] || 0}
                 />

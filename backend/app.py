@@ -99,9 +99,13 @@ def attendance():
         timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
         
         # WFH Cancellation Policy: If IN at Office, cancel any approved WFH for today
+        # Run in background — this is a fire-and-forget side effect, don't block the response
         if tag == "IN" and location == "Office":
             today_str = get_ist_now().strftime("%Y-%m-%d")
-            cancel_wfh_for_date(emp_id, today_str)
+            threading.Thread(
+                target=cancel_wfh_for_date, args=(emp_id, today_str),
+                daemon=True, name=f"WFH-cancel-{emp_id}"
+            ).start()
             
     except ValueError as ve:
         return jsonify({"message": str(ve)}), 400

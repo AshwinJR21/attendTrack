@@ -16,7 +16,42 @@ IST_TZ = timezone(timedelta(hours=5, minutes=30))
 def get_ist_now():
     return datetime.now(IST_TZ)
 
-api_lock = threading.RLock()
+
+# =========================
+# IN-MEMORY TTL CACHE
+# =========================
+_cache = {}       # key -> (value, expiry_timestamp)
+_cache_lock = threading.Lock()
+
+def _cache_get(key):
+    """Return cached value if it exists and hasn't expired, else None."""
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        value, expiry = entry
+        if time.time() > expiry:
+            del _cache[key]
+            return None
+        return value
+
+def _cache_set(key, value, ttl_seconds):
+    """Store a value in cache with a TTL."""
+    with _cache_lock:
+        _cache[key] = (value, time.time() + ttl_seconds)
+
+def _cache_invalidate(prefix=""):
+    """Invalidate all cache entries whose keys start with prefix."""
+    with _cache_lock:
+        if not prefix:
+            _cache.clear()
+        else:
+            keys_to_delete = [k for k in _cache if k.startswith(prefix)]
+            for k in keys_to_delete:
+                del _cache[k]
+
+# Sheet existence cache — once confirmed, a sheet never disappears
+_sheet_exists_cache = set()
 
 # =========================
 # CONFIG
@@ -43,6 +78,8 @@ service = build("sheets", "v4", credentials=creds)
 drive_service = build("drive", "v3", credentials=creds)
 
 
+api_lock = threading.RLock()
+
 def _rebuild_service():
     """Rebuild the Google Sheets and Drive service objects."""
     global service, drive_service, creds
@@ -54,8 +91,9 @@ def _rebuild_service():
 def retry_api(fn, retries=3, backoff=1.5):
     """
     Call fn() with automatic retry on transient SSL / connection errors.
-    Holds a thread-safe lock to prevent google-api-python-client memory corruptions
-    under concurrent Flask requests.
+    Holds a lock because httplib2 (used by google-api-python-client)
+    is not thread-safe for shared service objects.
+    The in-memory cache layer above means most reads skip this entirely.
     """
     with api_lock:
         for attempt in range(retries):
@@ -205,7 +243,11 @@ def get_current_sheet_name():
 def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
     if spreadsheet_id is None:
         spreadsheet_id = get_yearly_spreadsheet_id()
-    
+
+    cache_key = f"{spreadsheet_id}:{sheet_name}"
+    if cache_key in _sheet_exists_cache:
+        return  # Already confirmed to exist
+
     spreadsheet = retry_api(
         lambda: service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     )
@@ -215,6 +257,10 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
         for s in spreadsheet.get("sheets", [])
     ]
 
+    # Cache ALL sheets found in this spreadsheet
+    for s_name in existing_sheets:
+        _sheet_exists_cache.add(f"{spreadsheet_id}:{s_name}")
+
     if sheet_name not in existing_sheets:
         requests = [{"addSheet": {"properties": {"title": sheet_name}}}]
         retry_api(
@@ -223,6 +269,7 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
                 body={"requests": requests}
             ).execute()
         )
+        _sheet_exists_cache.add(cache_key)
 
 
 # =========================
@@ -270,6 +317,17 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
             body=body,
         ).execute()
     )
+
+    # Write-through cache: append new row to cached data instead of invalidating.
+    # This way the next reader sees the update instantly from memory.
+    cache_key = f"rows:{sheet_name}:{year}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        _cache_set(cache_key, cached + [row], 10)
+    else:
+        # No cache entry — seed it so the next read is instant
+        _cache_invalidate("rows:")
+
     return timestamp
 
 
@@ -298,7 +356,12 @@ def get_employee_last_punch(emp_id, sheet_name=None, year=None):
 def get_rows(sheet_name=None, year=None):
     if sheet_name is None:
         sheet_name = get_current_sheet_name()
-    
+
+    cache_key = f"rows:{sheet_name}:{year}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     spreadsheet_id = get_yearly_spreadsheet_id(year)
     ensure_sheet_exists(sheet_name, spreadsheet_id)
 
@@ -308,7 +371,9 @@ def get_rows(sheet_name=None, year=None):
             range=f"'{sheet_name}'!A:E"
         ).execute()
     )
-    return result.get("values", [])
+    rows = result.get("values", [])
+    _cache_set(cache_key, rows, 10)  # 10-second TTL
+    return rows
 
 
 # =========================
@@ -362,6 +427,11 @@ def get_all_statuses_bulk(sheet_name=None, year=None):
 # 4. GET ACTIVE EMPLOYEES FROM MASTER SHEET
 # =========================
 def get_active_employees():
+    cache_key = "active_employees"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     spreadsheet_id = get_master_spreadsheet_id()
     result = retry_api(
         lambda: service.spreadsheets().values().get(
@@ -390,6 +460,7 @@ def get_active_employees():
                 "status": status,
             })
 
+    _cache_set(cache_key, employees, 60)  # 60-second TTL
     return employees
 
 
@@ -540,6 +611,54 @@ def update_wfh_status(tg_id, start_date, end_date, new_status):
                 body={"values": [[new_status]]}
             ).execute())
             return
+
+def batch_update_wfh_statuses(requests_list, new_status):
+    """Updates multiple WFH requests' status in a single batch API call.
+    requests_list: list of dicts with keys 'tg_id', 'from', 'to'
+    new_status: 'approved' or 'rejected'
+    """
+    if not requests_list:
+        return
+    
+    spreadsheet_id = get_master_spreadsheet_id()
+    ensure_wfh_sheet_exists(spreadsheet_id)
+    
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows:
+        return
+    
+    # Build a lookup set of target keys
+    target_keys = set()
+    for req in requests_list:
+        target_keys.add(f"{req['tg_id']}|{req['from']}|{req['to']}")
+    
+    # Collect all matching row ranges for batch update
+    update_data = []
+    for i, row in enumerate(rows):
+        if len(row) < 3:
+            continue
+        key = f"{row[0]}|{row[1]}|{row[2]}"
+        if key in target_keys:
+            row_num = i + 1
+            update_data.append({
+                "range": f"'{WFH_REQUESTS_SHEET}'!F{row_num}",
+                "values": [[new_status]]
+            })
+    
+    if update_data:
+        retry_api(lambda: service.spreadsheets().values().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={
+                "valueInputOption": "RAW",
+                "data": update_data
+            }
+        ).execute())
 
 def cancel_wfh_for_date(emp_id, date_str):
     """Cancels any approved WFH request for a specific employee and date."""

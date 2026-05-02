@@ -3,6 +3,7 @@ import re
 import json
 import html
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from sheets_service import (
     TELEGRAM_TOKEN,
     ADMIN_IDS,
@@ -11,6 +12,7 @@ from sheets_service import (
     has_approved_wfh,
     log_wfh_request,
     update_wfh_status,
+    batch_update_wfh_statuses,
     check_duplicate_wfh,
     get_pending_wfh_requests,
     get_pending_wfh_count,
@@ -19,6 +21,7 @@ from sheets_service import (
 )
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+_tg_pool = ThreadPoolExecutor(max_workers=4)
 
 def send_message(chat_id, text, reply_markup=None):
     """Sends a text message via Telegram API."""
@@ -314,14 +317,20 @@ def handle_bulk_action(chat_id, message_id, data, current_message, query_id):
 
     # Bulk actions:
     if action in ["approve_all", "reject_all"]:
-        for req in pending:
-            status = "approved" if action == "approve_all" else "rejected"
-            update_wfh_status(req['tg_id'], req['from'], req['to'], status)
-            
+        status = "approved" if action == "approve_all" else "rejected"
+        
+        # 1. Batch-update all statuses in a single API call
+        batch_update_wfh_statuses(pending, status)
+        
+        # 2. Send notifications in parallel
+        def _notify(req):
             emoji = "🎉" if status == "approved" else "😔"
             msg = f"{emoji} Your WFH request from {req['from']} to {req['to']} has been {status.upper()}."
             send_message(req['tg_id'], msg)
-            results.append(f"• {html.escape(req['name'])} ({status})")
+            return f"• {html.escape(req['name'])} ({status})"
+        
+        futures = [_tg_pool.submit(_notify, req) for req in pending]
+        results = [f.result() for f in futures]
                 
         summary = "✅ <b>Action Completed</b>\n\n" + "\n".join(results)
         if not results:
