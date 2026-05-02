@@ -846,3 +846,78 @@ def compute_daily_minutes(date_str):
         result_map[emp_id] = int(total_secs / 60)
 
     return result_map
+
+
+# =========================
+# 7. GET EARLIEST RECORD DATE
+#    Finds the earliest date available across all Attendance_* spreadsheets.
+# =========================
+earliest_date_cache = None
+
+def get_earliest_record_date():
+    global earliest_date_cache
+    if earliest_date_cache:
+        return earliest_date_cache
+
+    folder_id = get_attendance_folder_id()
+    # Find all Attendance_* files
+    query = f"name contains 'Attendance_' and '{folder_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    results = retry_api(lambda: drive_service.files().list(q=query, fields="files(id, name)").execute())
+    files = results.get("files", [])
+
+    earliest_year = None
+    earliest_spreadsheet_id = None
+
+    for f in files:
+        name = f["name"]
+        try:
+            year = int(name.split("_")[1])
+            if earliest_year is None or year < earliest_year:
+                earliest_year = year
+                earliest_spreadsheet_id = f["id"]
+        except (IndexError, ValueError):
+            pass
+
+    if not earliest_spreadsheet_id:
+        return get_ist_now().strftime("%Y-%m-%d")
+
+    spreadsheet = retry_api(lambda: service.spreadsheets().get(spreadsheetId=earliest_spreadsheet_id).execute())
+    sheets = spreadsheet.get("sheets", [])
+    if not sheets:
+        return f"{earliest_year}-01-01"
+
+    months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+    earliest_month_idx = 12
+    earliest_sheet_title = None
+
+    for s in sheets:
+        title = s["properties"]["title"]
+        if title.endswith("_Activity_Log"):
+            month_str = title.split("_")[0]
+            if month_str in months:
+                idx = months.index(month_str)
+                if idx < earliest_month_idx:
+                    earliest_month_idx = idx
+                    earliest_sheet_title = title
+
+    if not earliest_sheet_title:
+        return f"{earliest_year}-01-01"
+
+    # Get first row of data
+    result = retry_api(lambda: service.spreadsheets().values().get(
+        spreadsheetId=earliest_spreadsheet_id,
+        range=f"'{earliest_sheet_title}'!A2:E2"
+    ).execute())
+
+    rows = result.get("values", [])
+    if rows and len(rows[0]) >= 3:
+        ts = rows[0][2]
+        try:
+            date_str = ts.split(" ")[0]
+            earliest_date_cache = date_str
+            return date_str
+        except Exception:
+            pass
+
+    return f"{earliest_year}-01-01"

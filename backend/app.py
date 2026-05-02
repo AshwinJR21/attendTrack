@@ -16,6 +16,7 @@ from sheets_service import (
     get_ist_now,
     cancel_wfh_for_date,
     cleanup_expired_wfh,
+    get_earliest_record_date,
 )
 from telegram_bot import handle_webhook
 
@@ -137,6 +138,20 @@ def daily_minutes():
             traceback.print_exc()
             result[date_str] = {}
     return jsonify(result)
+
+
+# =========================
+# EARLIEST DATE — returns the first ever recorded date
+# =========================
+@app.route("/earliest-date", methods=["GET"])
+def earliest_date():
+    try:
+        date_str = get_earliest_record_date()
+        return jsonify({"earliest_date": date_str})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 # =========================

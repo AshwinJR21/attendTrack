@@ -33,7 +33,20 @@ function minuteProgress(sinceMs: number, nowMs: number): number {
 function getDateStr(daysOffset: number): string {
   const d = new Date();
   d.setDate(d.getDate() + daysOffset);
-  return d.toISOString().slice(0, 10);
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function addDaysLocal(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function formatDateHeader(dateStr: string): string {
@@ -71,16 +84,28 @@ interface HistoryData {
 }
 
 function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[], now: number, todayCompleted: Record<string, number> }) {
-  // colBase: how many days ago the NEWER column is. Default 0 = today.
-  // date1 = today-(colBase+1), date2 = today-colBase
-  const [colBase, setColBase] = useState(0);
+  const todayStr = getDateStr(0);
+  const [referenceDate, setReferenceDate] = useState(todayStr);
   const [histData, setHistData] = useState<HistoryData>({});
-  const [canGoLeft, setCanGoLeft] = useState(true);
+  const [earliestDate, setEarliestDate] = useState<string>("2024-01-01");
   const [loadingHist, setLoadingHist] = useState(false);
 
-  const date1 = getDateStr(-(colBase + 1));
-  const date2 = getDateStr(-colBase);
-  const canGoRight = colBase > 0;
+  useEffect(() => {
+    fetch(`${API_BASE}/earliest-date`)
+      .then(r => r.json())
+      .then(data => { if (data.earliest_date) setEarliestDate(data.earliest_date); })
+      .catch(() => {});
+  }, []);
+
+  // Validate referenceDate, fallback to todayStr if invalid
+  let validRef = referenceDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(validRef)) validRef = todayStr;
+
+  const date2 = validRef;
+  const date1 = addDaysLocal(validRef, -1);
+
+  const canGoRight = date2 < todayStr;
+  const canGoLeft = date1 > earliestDate;
 
   useEffect(() => {
     setLoadingHist(true);
@@ -88,16 +113,20 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
       .then((r) => r.json())
       .then((data: HistoryData) => {
         setHistData(data);
-        const d1Total = Object.values(data[date1] || {}).reduce((a, b) => a + b, 0);
-        setCanGoLeft(d1Total > 0);
         setLoadingHist(false);
       })
       .catch(() => setLoadingHist(false));
   }, [date1, date2]);
 
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.value) setReferenceDate(e.target.value);
+  };
+
+  const handlePrev = () => setReferenceDate(addDaysLocal(validRef, -1));
+  const handleNext = () => setReferenceDate(addDaysLocal(validRef, 1));
+
   const d1Map = histData[date1] || {};
   const d2Map = histData[date2] || {};
-  const todayStr = getDateStr(0);
 
   return (
     <div className="history-panel">
@@ -113,17 +142,36 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
               <th className="ht-date">
                 <button
                   className="hist-arrow"
-                  onClick={() => setColBase((c) => c + 1)}
+                  onClick={handlePrev}
                   disabled={!canGoLeft}
                   title="Go further back"
                 >{"<"}</button>
                 {formatDateHeader(date1)}
               </th>
+              
+              <th style={{ width: "40px", padding: 0, textAlign: "center" }}>
+                <div className="date-picker-wrap" style={{ margin: 0 }}>
+                  <div className="calendar-icon-btn" title="Pick a date">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/>
+                    </svg>
+                    <input 
+                      type="date" 
+                      className="hidden-date-input" 
+                      value={date2} 
+                      max={todayStr}
+                      min={earliestDate}
+                      onChange={handleDateChange} 
+                    />
+                  </div>
+                </div>
+              </th>
+
               <th className="ht-date">
                 {formatDateHeader(date2)}
                 <button
                   className="hist-arrow"
-                  onClick={() => setColBase((c) => c - 1)}
+                  onClick={handleNext}
                   disabled={!canGoRight}
                   title="Go forward"
                 >{">"}</button>
@@ -140,6 +188,7 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
                   <td className={`ht-mins-cell ${m1 && m1 > 0 ? "mins-good" : "mins-zero"}`}>
                     {formatDuration(m1)}
                   </td>
+                  <td style={{ width: 0, padding: 0 }}></td>
                   <td className={`ht-mins-cell ${m2 && m2 > 0 ? "mins-good" : "mins-zero"}`}>
                     {formatDuration(m2)}
                   </td>
@@ -147,6 +196,7 @@ function HistoryTable({ employees, now, todayCompleted }: { employees: Employee[
               );
             })}
           </tbody>
+
         </table>
       </div>
     </div>

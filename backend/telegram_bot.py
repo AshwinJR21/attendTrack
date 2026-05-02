@@ -236,13 +236,13 @@ def handle_callback_query(query):
 
     if data == "list":
         render_wfh_list(chat_id, message_id)
-    elif data.startswith("toggle|"):
-        handle_toggle(chat_id, message_id, data, message)
+    elif data == "noop":
+        pass
     elif data.startswith("action|"):
         handle_bulk_action(chat_id, message_id, data, message, query_id)
 
-def render_wfh_list(chat_id, message_id=None, overrides=None):
-    """Renders the multi-select WFH list. message_id provided if editing."""
+def render_wfh_list(chat_id, message_id=None):
+    """Renders the WFH list with single actions and bulk actions. message_id provided if editing."""
     pending = get_pending_wfh_requests()
     if not pending:
         text = "✅ <b>All caught up!</b> No pending WFH requests."
@@ -254,31 +254,19 @@ def render_wfh_list(chat_id, message_id=None, overrides=None):
 
     text = f"📋 <b>Pending WFH Requests ({len(pending)})</b>"
     
-    # Selection state is kept in the button text (⬜ vs ✅)
-    # If this is an edit (toggle), we might have previous state in 'overrides'
     keyboard = []
     
-    for i, req in enumerate(pending):
+    for req in pending:
         # Create a unique key for this request
         key = f"{req['tg_id']}|{req['from']}|{req['to']}"
-        icon = "⬜"
-        if overrides and overrides.get(key):
-            icon = "✅"
-            
-        btn_text = f"{icon} {req['name']} ({req['from']})"
-        keyboard.append([{"text": btn_text, "callback_data": f"toggle|{key}"}])
+        short_date = req['from'][5:] if len(req['from']) == 10 else req['from']
+        
+        btn_name = {"text": f"👤 {req['name']} ({short_date})", "callback_data": "noop"}
+        btn_approve = {"text": "✅", "callback_data": f"action|approve_single|{key}"}
+        btn_reject = {"text": "❌", "callback_data": f"action|reject_single|{key}"}
+        
+        keyboard.append([btn_name, btn_approve, btn_reject])
 
-    # Count selections for dynamic labels
-    selected_count = 0
-    if overrides:
-        selected_count = sum(1 for v in overrides.values() if v)
-
-    # Add Action Buttons
-    sel_suffix = f" ({selected_count})" if selected_count > 0 else ""
-    keyboard.append([
-        {"text": f"🟢 Approve Selected{sel_suffix}", "callback_data": "action|approve_sel"},
-        {"text": f"🔴 Reject Selected{sel_suffix}", "callback_data": "action|reject_sel"}
-    ])
     keyboard.append([
         {"text": "✅ Approve ALL", "callback_data": "action|approve_all"},
         {"text": "❌ Reject ALL", "callback_data": "action|reject_all"}
@@ -291,92 +279,54 @@ def render_wfh_list(chat_id, message_id=None, overrides=None):
     else:
         send_message(chat_id, text, reply_markup=reply_markup)
 
-def handle_toggle(chat_id, message_id, data, current_message):
-    """Toggles the checkmark on a specific request button without re-fetching from Sheets."""
-    parts = data.split("|")
-    toggled_key = f"{parts[1]}|{parts[2]}|{parts[3]}"
-    
-    current_keyboard = current_message.get("reply_markup", {}).get("inline_keyboard", [])
-    
-    for row in current_keyboard:
-        btn = row[0]
-        btn_data = btn.get("callback_data", "")
-        if btn_data == data:
-            # Found the toggled button
-            is_checked = "✅" in btn.get("text", "")
-            new_icon = "⬜" if is_checked else "✅"
-            # Get everything after the first space (the original text excluding the icon)
-            label = btn.get("text", "").split(" ", 1)[1]
-            btn["text"] = f"{new_icon} {label}"
-            break
-            
-    # Keep the same text as before
-    current_text = current_message.get("text", "📋 Pending WFH Requests")
-
-    # Update the labels of the "Selected" buttons
-    selected_count = 0
-    for row in current_keyboard:
-        btn = row[0]
-        if "✅" in btn.get("text", "") and btn.get("callback_data", "").startswith("toggle|"):
-            selected_count += 1
-            
-    sel_suffix = f" ({selected_count})" if selected_count > 0 else ""
-    # Usually the action buttons are the last two rows (rows -2 and -1)
-    # Row -2 is "Approve/Reject Selected"
-    current_keyboard[-2][0]["text"] = f"🟢 Approve Selected{sel_suffix}"
-    current_keyboard[-2][1]["text"] = f"🔴 Reject Selected{sel_suffix}"
-
-    edit_message_text(chat_id, message_id, current_text, reply_markup={"inline_keyboard": current_keyboard})
-
 def handle_bulk_action(chat_id, message_id, data, current_message, query_id):
-    """Processes bulk approval or rejection."""
-    action = data.split("|")[1]
-    pending = get_pending_wfh_requests()
+    """Processes bulk or single approval or rejection."""
+    parts = data.split("|")
+    action = parts[1]
     
-    selected_keys = set()
-    if action in ["approve_sel", "reject_sel"]:
-        current_keyboard = current_message.get("reply_markup", {}).get("inline_keyboard", [])
-        for row in current_keyboard:
-            btn = row[0]
-            if btn.get("callback_data", "").startswith("toggle|") and "✅" in btn.get("text", ""):
-                selected_keys.add(btn.get("callback_data").split("|", 1)[1])
-                
-        if not selected_keys:
+    pending = get_pending_wfh_requests()
+    results = []
+    
+    # Check if single action
+    if action in ["approve_single", "reject_single"]:
+        target_key = f"{parts[2]}|{parts[3]}|{parts[4]}"
+        status = "approved" if action == "approve_single" else "rejected"
+        
+        target_req = next((req for req in pending if f"{req['tg_id']}|{req['from']}|{req['to']}" == target_key), None)
+        
+        if target_req:
+            update_wfh_status(target_req['tg_id'], target_req['from'], target_req['to'], status)
+            emoji = "🎉" if status == "approved" else "😔"
+            msg = f"{emoji} Your WFH request from {target_req['from']} to {target_req['to']} has been {status.upper()}."
+            send_message(target_req['tg_id'], msg)
+            
+            # Re-render list
+            render_wfh_list(chat_id, message_id)
+            return
+        else:
             requests.post(f"{BASE_URL}/answerCallbackQuery", json={
                 "callback_query_id": query_id, 
-                "text": "⚠️ No employees selected. Tap names to check them.",
+                "text": "⚠️ Request not found or already processed.",
                 "show_alert": True
             })
+            render_wfh_list(chat_id, message_id)
             return
 
-    results = []
-    for req in pending:
-        key = f"{req['tg_id']}|{req['from']}|{req['to']}"
-        should_process = False
-        
-        if action == "approve_all": 
-            should_process = True
-            status = "approved"
-        elif action == "reject_all": 
-            should_process = True
-            status = "rejected"
-        elif action == "approve_sel" and key in selected_keys: 
-            should_process = True
-            status = "approved"
-        elif action == "reject_sel" and key in selected_keys: 
-            should_process = True
-            status = "rejected"
-        
-        if should_process:
+    # Bulk actions:
+    if action in ["approve_all", "reject_all"]:
+        for req in pending:
+            status = "approved" if action == "approve_all" else "rejected"
             update_wfh_status(req['tg_id'], req['from'], req['to'], status)
-            # Notify user
+            
             emoji = "🎉" if status == "approved" else "😔"
             msg = f"{emoji} Your WFH request from {req['from']} to {req['to']} has been {status.upper()}."
             send_message(req['tg_id'], msg)
             results.append(f"• {html.escape(req['name'])} ({status})")
-            
-    summary = "✅ <b>Bulk Action Completed</b>\n\n" + "\n".join(results)
-    edit_message_text(chat_id, message_id, summary)
+                
+        summary = "✅ <b>Action Completed</b>\n\n" + "\n".join(results)
+        if not results:
+            summary = "⚠️ No pending requests found to process."
+        edit_message_text(chat_id, message_id, summary)
 
 def handle_admin_reply(msg):
     reply = msg.get("text", "").strip().lower()
