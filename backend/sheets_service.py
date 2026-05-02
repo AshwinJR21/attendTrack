@@ -538,7 +538,7 @@ def has_approved_wfh(tg_id, target_date):
     result = retry_api(
         lambda: service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:E"
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
         ).execute()
     )
     rows = result.get("values", [])
@@ -550,7 +550,7 @@ def has_approved_wfh(tg_id, target_date):
     for row in rows[1:]:
         if len(row) < 3: continue
         if str(row[0]) == str(tg_id):
-            # Check status if column exists, otherwise assume approved for old entries
+            # Check status if column F exists, otherwise assume approved for old entries
             status = row[5].lower() if len(row) > 5 else "approved"
             if status != "approved":
                 continue
@@ -770,11 +770,11 @@ def add_wfh_approval(tg_id, start_date, end_date):
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    row = [str(tg_id), start_date, end_date, emp_id, emp_name]
+    row = [str(tg_id), start_date, end_date, emp_id, emp_name, "approved"]
     retry_api(
         lambda: service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:E",
+            range=f"'{WFH_REQUESTS_SHEET}'!A:F",
             valueInputOption="RAW",
             body={"values": [row]}
         ).execute()
