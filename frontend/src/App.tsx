@@ -14,6 +14,7 @@ interface Employee {
   current_status: "IN" | "OUT";
   since?: string;
   location?: string;
+  has_wfh?: boolean;
 }
 
 function parseSince(ts?: string): Date | null {
@@ -210,12 +211,11 @@ interface CardProps {
   emp: Employee;
   now: number;
   isLoading: boolean;
-  anyLoading: boolean;
   onToggle: (emp: Employee) => void;
   todayCompleted: number; // completed IN→OUT minutes today (from backend)
 }
 
-function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayCompleted }: CardProps) {
+function EmployeeCard({ emp, now, isLoading, onToggle, todayCompleted }: CardProps) {
   const isIN = emp.current_status === "IN";
   const isHome = isIN && emp.location === "Home";
   const sinceDate = parseSince(emp.since);
@@ -239,12 +239,12 @@ function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayComplete
     <div className="employee-card">
       <p className="emp-name">{emp.name}</p>
   
-      <button
-        className={`circle-btn ${isHome ? "status-home" : (isIN ? "status-in" : "status-out")} ${isLoading ? "btn-loading" : ""}`}
+    <button
+        className={`circle-btn ${isHome ? "status-home" : (isIN ? "status-in" : "status-out")} ${isLoading ? "btn-loading" : ""} ${emp.has_wfh ? "btn-wfh" : ""}`}
         onClick={() => onToggle(emp)}
-        disabled={isLoading}
+        disabled={isLoading || emp.has_wfh}
         style={{ width: BTN_SIZE, height: BTN_SIZE }}
-        aria-label={`${emp.name} — ${emp.current_status}`}
+        aria-label={`${emp.name} — ${emp.current_status}${emp.has_wfh ? " (WFH)" : ""}`}
       >
         {isLoading ? (
           <span className="btn-spinner" />
@@ -261,11 +261,11 @@ function EmployeeCard({ emp, now, isLoading, anyLoading, onToggle, todayComplete
                 style={{ transition: "stroke-dashoffset 0.95s linear" }} />
             </svg>
             <div className="btn-time-display">
-              <span className="btn-minutes-num">{hasSince ? sessionMins : "—"}</span>
+              <span className="btn-minutes-num">{hasSince ? sessionMins : (emp.has_wfh ? "WFH" : "—")}</span>
               {hasSince && <span className="btn-mins-label">mins</span>}
             </div>
             <span className={`status-badge ${isHome ? "badge-home" : (isIN ? "badge-in" : "badge-out")}`}>
-              {emp.current_status}
+              {emp.has_wfh && emp.current_status === "OUT" ? "WFH" : emp.current_status}
             </span>
           </>
         )}
@@ -284,8 +284,8 @@ const MemoEmployeeCard = memo(EmployeeCard, (prev, next) => {
     prev.emp.current_status === next.emp.current_status &&
     prev.emp.since === next.emp.since &&
     prev.emp.location === next.emp.location &&
+    prev.emp.has_wfh === next.emp.has_wfh &&
     prev.isLoading === next.isLoading &&
-    prev.anyLoading === next.anyLoading &&
     prev.todayCompleted === next.todayCompleted &&
     // Only re-render for time changes every 5s (coarse)
     Math.floor(prev.now / 5000) === Math.floor(next.now / 5000)
@@ -465,7 +465,6 @@ export default function App() {
                   emp={emp}
                   now={now}
                   isLoading={actionLoading.has(emp.id)}
-                  anyLoading={actionLoading.size > 0}
                   onToggle={handleToggle}
                   todayCompleted={todayCompleted[emp.id] || 0}
                 />

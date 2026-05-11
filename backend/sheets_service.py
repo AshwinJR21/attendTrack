@@ -530,8 +530,13 @@ def register_tg_id(emp_id, tg_id):
             return emp.get("name", "Employee")
     return None
 
-def has_approved_wfh(tg_id, target_date):
-    """Checks if a Telegram user has an approved WFH entry for a specific date."""
+def has_approved_wfh(target_date, tg_id=None, emp_id=None):
+    """Checks if a user has an approved WFH entry for a specific date.
+    Can check by either telegram_id or employee_id.
+    """
+    if not tg_id and not emp_id:
+        return False
+
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
@@ -544,12 +549,19 @@ def has_approved_wfh(tg_id, target_date):
     rows = result.get("values", [])
     if not rows or len(rows) < 2: return False
     
-    # Headers: telegram_id, from_date, to_date
+    # Headers: [telegram_id, from, to, employee_id, name, status]
     target_ts = datetime.combine(target_date, datetime.min.time()).timestamp()
     
     for row in rows[1:]:
         if len(row) < 3: continue
-        if str(row[0]) == str(tg_id):
+        
+        match = False
+        if tg_id and str(row[0]) == str(tg_id):
+            match = True
+        elif emp_id and len(row) > 3 and str(row[3]) == str(emp_id):
+            match = True
+            
+        if match:
             # Check status if column F exists, otherwise assume approved for old entries
             status = row[5].lower() if len(row) > 5 else "approved"
             if status != "approved":
@@ -660,8 +672,13 @@ def batch_update_wfh_statuses(requests_list, new_status):
             }
         ).execute())
 
-def cancel_wfh_for_date(emp_id, date_str):
-    """Cancels any approved WFH request for a specific employee and date."""
+def cancel_wfh_for_date(date_str, emp_id=None, tg_id=None):
+    """Cancels any approved WFH request for a specific user and date.
+    Marks status as 'cancelled'.
+    """
+    if not emp_id and not tg_id:
+        return False
+
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
@@ -672,17 +689,25 @@ def cancel_wfh_for_date(emp_id, date_str):
         ).execute()
     )
     rows = result.get("values", [])
-    if not rows: return
-    
+    if not rows: return False
+
     try:
         target_ts = datetime.strptime(date_str, "%Y-%m-%d").timestamp()
     except ValueError:
-        return
+        return False
 
+    cancelled_any = False
     # Headers: [tg_id, start, end, emp_id, name, status]
     for i, row in enumerate(rows):
-        if len(row) < 4: continue
-        if str(row[3]) == str(emp_id):
+        if len(row) < 3: continue
+        
+        match = False
+        if tg_id and str(row[0]) == str(tg_id):
+            match = True
+        elif emp_id and len(row) > 3 and str(row[3]) == str(emp_id):
+            match = True
+            
+        if match:
             status = row[5].lower() if len(row) > 5 else "approved"
             if status != "approved":
                 continue
@@ -696,10 +721,12 @@ def cancel_wfh_for_date(emp_id, date_str):
                         spreadsheetId=spreadsheet_id,
                         range=f"'{WFH_REQUESTS_SHEET}'!F{row_num}",
                         valueInputOption="RAW",
-                        body={"values": [["invalid"]]}
+                        body={"values": [["cancelled"]]}
                     ).execute())
-                    print(f"[WFH] Invalidated approved WFH for {emp_id} on {date_str}")
+                    print(f"[WFH] Cancelled approved WFH for user (tg:{tg_id}, emp:{emp_id}) on {date_str}")
+                    cancelled_any = True
             except ValueError: continue
+    return cancelled_any
 
 def check_duplicate_wfh(tg_id, start_date):
     """Returns (True, status) if a WFH request already exists for this user and start date."""

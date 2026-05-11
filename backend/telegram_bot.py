@@ -17,7 +17,8 @@ from sheets_service import (
     get_pending_wfh_requests,
     get_pending_wfh_count,
     append_attendance,
-    get_ist_now
+    get_ist_now,
+    cancel_wfh_for_date
 )
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
@@ -94,14 +95,23 @@ def handle_webhook(update):
 
     # --- USER COMMANDS ---
     if text == "/start":
-        send_message(chat_id, 
+        help_text = (
             "Welcome to AttendTrack Bot!\n\n"
-            "Commands:\n"
+            "<b>General Commands:</b>\n"
             "/register &lt;EMP_ID&gt; — Link your account\n"
+            "/wfh &lt;YYYY-MM-DD&gt; &lt;YYYY-MM-DD&gt; — Request WFH\n"
+            "/cancel — Cancel your entire approved WFH request\n"
             "/in — Clock IN (WFH only)\n"
             "/out — Clock OUT (WFH only)\n"
-            "/wfh &lt;YYYY-MM-DD&gt; &lt;YYYY-MM-DD&gt; — Request WFH"
         )
+        
+        if str(chat_id) in ADMIN_IDS:
+            help_text += (
+                "\n<b>Admin Commands:</b>\n"
+                "/requests — View and handle pending WFH requests"
+            )
+            
+        send_message(chat_id, help_text)
         return
 
     if text.startswith("/register"):
@@ -118,6 +128,10 @@ def handle_webhook(update):
 
     if text.startswith("/wfh"):
         handle_wfh_request(chat_id, user_id, text)
+        return
+
+    if text == "/cancel":
+        handle_cancel_wfh(chat_id, user_id)
         return
 
     # Only admins can use these buttons
@@ -151,7 +165,7 @@ def handle_attendance(chat_id, user_id, tag):
 
     # Check for approved WFH
     now = get_ist_now()
-    if not has_approved_wfh(user_id, now.date()):
+    if not has_approved_wfh(now.date(), tg_id=user_id):
         send_message(chat_id, "❌ You do not have an approved WFH request for today.")
         return
 
@@ -165,6 +179,30 @@ def handle_attendance(chat_id, user_id, tag):
         notify_clients()
     except ValueError as ve:
         send_message(chat_id, f"❌ {html.escape(str(ve))}")
+    except Exception as e:
+        send_message(chat_id, f"⚠️ An error occurred: {html.escape(str(e))}")
+
+def handle_cancel_wfh(chat_id, user_id):
+    emp = get_employee_by_tg_id(user_id)
+    if not emp:
+        send_message(chat_id, "⚠️ Please register first using /register &lt;EMP_ID&gt;")
+        return
+
+    now = get_ist_now()
+    today_str = now.strftime("%Y-%m-%d")
+    
+    if not has_approved_wfh(now.date(), tg_id=user_id):
+        send_message(chat_id, "❌ You do not have an approved WFH request for today to cancel.")
+        return
+
+    try:
+        success = cancel_wfh_for_date(today_str, tg_id=user_id)
+        if success:
+            send_message(chat_id, "✅ Your entire WFH request has been cancelled. You can now mark IN from the office dashboard.")
+            from event_bus import notify_clients
+            notify_clients()
+        else:
+            send_message(chat_id, "⚠️ Could not cancel WFH request. It might have already been cancelled or processed.")
     except Exception as e:
         send_message(chat_id, f"⚠️ An error occurred: {html.escape(str(e))}")
 

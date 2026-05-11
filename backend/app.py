@@ -16,6 +16,7 @@ from sheets_service import (
     midnight_rollover,
     compute_daily_minutes,
     get_ist_now,
+    has_approved_wfh,
     cancel_wfh_for_date,
     cleanup_expired_wfh,
     get_earliest_record_date,
@@ -64,12 +65,15 @@ def employees():
 
         # Fetch all statuses in a SINGLE API call instead of one per employee
         status_map = get_all_statuses_bulk(sheet_name)
+        today = get_ist_now().date()
 
         for emp in active_employees:
             info = status_map.get(emp["id"], {"status": "OUT", "since": "", "location": "Office"})
             emp["current_status"] = info["status"]
             emp["since"] = info["since"]
             emp["location"] = info.get("location", "Office")
+            # Check for approved WFH today
+            emp["has_wfh"] = has_approved_wfh(today, emp_id=emp["id"])
 
         return jsonify({"employees": active_employees})
     except Exception as e:
@@ -99,16 +103,6 @@ def attendance():
 
     try:
         timestamp = append_attendance(emp_id, emp_name, tag, location, sheet_name)
-        
-        # WFH Cancellation Policy: If IN at Office, cancel any approved WFH for today
-        # Run in background — this is a fire-and-forget side effect, don't block the response
-        if tag == "IN" and location == "Office":
-            today_str = get_ist_now().strftime("%Y-%m-%d")
-            threading.Thread(
-                target=cancel_wfh_for_date, args=(emp_id, today_str),
-                daemon=True, name=f"WFH-cancel-{emp_id}"
-            ).start()
-            
         notify_clients()
 
             
