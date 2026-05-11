@@ -15,7 +15,7 @@ This directory contains the systemd service files required to run the Attendance
     - Automatically runs `tailscale funnel 5000` on boot.
     - Ensures your backend port is exposed externally via Tailscale.
 4.  **`atbrowser.service` (Browser Autostart)**:
-    - Opens Firefox in fullscreen on `localhost:5173`.
+    - Opens Firefox in fullscreen (Press F11 to exit) on `localhost:5173`.
     - Waits for the frontend and graphical session to be ready.
 
 ---

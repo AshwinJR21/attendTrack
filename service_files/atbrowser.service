@@ -10,8 +10,8 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/<YOUR_USERNAME>/.Xauthority
 # Wait a bit longer to ensure the GUI is fully loaded
 ExecStartPre=/usr/bin/sleep 15
-# Open Firefox in fullscreen/kiosk mode
-ExecStart=/usr/bin/firefox --kiosk http://localhost:5173
+# Open Firefox in fullscreen mode (Press F11 to exit and use tabs)
+ExecStart=/usr/bin/firefox --fullscreen http://localhost:5173
 Restart=on-failure
 RestartSec=10
 
