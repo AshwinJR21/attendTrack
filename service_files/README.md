@@ -14,6 +14,9 @@ This directory contains the systemd service files required to run the Attendance
 3.  **`atfun.service` (Tailscale Funnel)**:
     - Automatically runs `tailscale funnel 5000` on boot.
     - Ensures your backend port is exposed externally via Tailscale.
+4.  **`atbrowser.service` (Browser Autostart)**:
+    - Opens Firefox in fullscreen on `localhost:5173`.
+    - Waits for the frontend and graphical session to be ready.
 
 ---
 
@@ -30,7 +33,7 @@ Follow these steps once to set up the services:
 ### 1. Copy Service Files
 Copy the service files to the system-wide service directory:
 ```bash
-sudo cp atbe.service atfe.service atfun.service /etc/systemd/system/
+sudo cp atbe.service atfe.service atfun.service atbrowser.service /etc/systemd/system/
 ```
 
 ### 2. Enable Services
@@ -40,6 +43,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable atbe
 sudo systemctl enable atfe
 sudo systemctl enable atfun
+sudo systemctl enable atbrowser
 ```
 
 ### 3. Start Services
@@ -48,6 +52,7 @@ Trigger the services to start right now without rebooting:
 sudo systemctl start atbe
 sudo systemctl start atfe
 sudo systemctl start atfun
+sudo systemctl start atbrowser
 ```
 
 ---
@@ -59,6 +64,7 @@ sudo systemctl start atfun
 systemctl status atbe
 systemctl status atfe
 systemctl status atfun
+systemctl status atbrowser
 ```
 - **Healthy Status**: `active (running)` for Backend/Frontend, and `active (exited)` for Funnel (which is normal).
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=Attendance Tracker Browser Autostart
+After=atfe.service
+
+[Service]
+User=<YOUR_USERNAME>
+# Set the display (usually :0 for the first monitor)
+Environment=DISPLAY=:0
+# Point to your Xauthority file so the service has permission to open a window
+Environment=XAUTHORITY=/home/<YOUR_USERNAME>/.Xauthority
+# Wait a bit longer to ensure the GUI is fully loaded
+ExecStartPre=/usr/bin/sleep 15
+# Open Firefox in fullscreen/kiosk mode
+ExecStart=/usr/bin/firefox --kiosk http://localhost:5173
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target
