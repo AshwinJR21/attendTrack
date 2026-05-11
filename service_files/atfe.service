@@ -1,0 +1,13 @@
+[Unit]
+Description=Attendance Tracker Frontend Service
+After=network.target atbe.service
+
+[Service]
+User=<YOUR_USERNAME>
+WorkingDirectory=<PROJECT_ROOT>/frontend
+ExecStart=<PATH_TO_BUN> dev -- --host
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

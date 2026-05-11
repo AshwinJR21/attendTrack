@@ -1,0 +1,13 @@
+[Unit]
+Description=Attendance Tracker Backend Service
+After=network.target tailscaled.service
+
+[Service]
+User=<YOUR_USERNAME>
+WorkingDirectory=<PROJECT_ROOT>/backend
+ExecStart=<PROJECT_ROOT>/backend/venv/bin/python app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
