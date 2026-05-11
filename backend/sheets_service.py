@@ -165,6 +165,10 @@ def get_master_spreadsheet_id():
 
 def ensure_wfh_sheet_exists(spreadsheet_id):
     """Ensures the 'wfh_requests' sheet exists in the master spreadsheet."""
+    cache_key = f"exists:wfh:{spreadsheet_id}"
+    if cache_key in _sheet_exists_cache:
+        return
+
     spreadsheet = retry_api(lambda: service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute())
     existing_sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
     
@@ -180,10 +184,16 @@ def ensure_wfh_sheet_exists(spreadsheet_id):
             valueInputOption="RAW",
             body={"values": headers}
         ).execute())
+    
+    _sheet_exists_cache.add(cache_key)
 
 
 def ensure_master_sheet_exists(spreadsheet_id):
     """Ensures the 'employee_master' sheet exists in the master spreadsheet."""
+    cache_key = f"exists:master:{spreadsheet_id}"
+    if cache_key in _sheet_exists_cache:
+        return
+
     spreadsheet = retry_api(lambda: service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute())
     existing_sheets = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
     
@@ -199,6 +209,8 @@ def ensure_master_sheet_exists(spreadsheet_id):
             valueInputOption="RAW",
             body={"values": headers}
         ).execute())
+    
+    _sheet_exists_cache.add(cache_key)
 
 
 def get_yearly_spreadsheet_id(year=None):
@@ -530,23 +542,34 @@ def register_tg_id(emp_id, tg_id):
             return emp.get("name", "Employee")
     return None
 
-def has_approved_wfh(target_date, tg_id=None, emp_id=None):
-    """Checks if a user has an approved WFH entry for a specific date.
-    Can check by either telegram_id or employee_id.
-    """
-    if not tg_id and not emp_id:
-        return False
+def get_all_wfh_requests():
+    """Fetches all WFH requests from the master spreadsheet with caching."""
+    cache_key = "wfh_requests_all"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     spreadsheet_id = get_master_spreadsheet_id()
-    ensure_wfh_sheet_exists(spreadsheet_id)
     
     result = retry_api(
         lambda: service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
+            range=f"'{WFH_REQUESTS_SHEET}'!A:Z"
         ).execute()
     )
     rows = result.get("values", [])
+    _cache_set(cache_key, rows, 10) # 10-second TTL is enough for a single request loop
+    return rows
+
+def has_approved_wfh(target_date, tg_id=None, emp_id=None):
+    """Checks if a user has an approved WFH entry for a specific date.
+    Can check by either telegram_id or employee_id.
+    Uses cached data to avoid hitting API quotas.
+    """
+    if not tg_id and not emp_id:
+        return False
+
+    rows = get_all_wfh_requests()
     if not rows or len(rows) < 2: return False
     
     # Headers: [telegram_id, from, to, employee_id, name, status]
@@ -593,6 +616,7 @@ def log_wfh_request(tg_id, start_date, end_date, status="pending"):
             body={"values": [row]}
         ).execute()
     )
+    _cache_invalidate("wfh_requests_all")
 
 def update_wfh_status(tg_id, start_date, end_date, new_status):
     """Updates the status of an existing WFH request."""
@@ -622,6 +646,7 @@ def update_wfh_status(tg_id, start_date, end_date, new_status):
                 valueInputOption="RAW",
                 body={"values": [[new_status]]}
             ).execute())
+            _cache_invalidate("wfh_requests_all")
             return
 
 def batch_update_wfh_statuses(requests_list, new_status):
@@ -635,13 +660,7 @@ def batch_update_wfh_statuses(requests_list, new_status):
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    result = retry_api(
-        lambda: service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
-        ).execute()
-    )
-    rows = result.get("values", [])
+    rows = get_all_wfh_requests()
     if not rows:
         return
     
@@ -671,6 +690,7 @@ def batch_update_wfh_statuses(requests_list, new_status):
                 "data": update_data
             }
         ).execute())
+        _cache_invalidate("wfh_requests_all")
 
 def cancel_wfh_for_date(date_str, emp_id=None, tg_id=None):
     """Cancels any approved WFH request for a specific user and date.
@@ -682,13 +702,7 @@ def cancel_wfh_for_date(date_str, emp_id=None, tg_id=None):
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    result = retry_api(
-        lambda: service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
-        ).execute()
-    )
-    rows = result.get("values", [])
+    rows = get_all_wfh_requests()
     if not rows: return False
 
     try:
@@ -733,13 +747,7 @@ def check_duplicate_wfh(tg_id, start_date):
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    result = retry_api(
-        lambda: service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
-        ).execute()
-    )
-    rows = result.get("values", [])
+    rows = get_all_wfh_requests()
     if not rows or len(rows) < 2: return False, None
     
     # Skip header
@@ -760,13 +768,7 @@ def get_pending_wfh_requests():
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    result = retry_api(
-        lambda: service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"'{WFH_REQUESTS_SHEET}'!A:F"
-        ).execute()
-    )
-    rows = result.get("values", [])
+    rows = get_all_wfh_requests()
     if not rows or len(rows) < 2: return []
     
     pending = []
@@ -812,11 +814,7 @@ def cleanup_expired_wfh():
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
-    result = retry_api(lambda: service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id,
-        range=f"'{WFH_REQUESTS_SHEET}'!A:F"
-    ).execute())
-    rows = result.get("values", [])
+    rows = get_all_wfh_requests()
     if not rows or len(rows) < 2: return
     
     # Get IST today at midnight for comparison
