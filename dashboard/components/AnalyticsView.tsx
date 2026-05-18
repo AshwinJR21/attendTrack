@@ -16,19 +16,15 @@ import {
   Download
 } from 'lucide-react';
 
-// Mock Data for Draft
+// Real-ready definitions (cleared mock data)
 const STATS = [
-  { label: 'Attendance Rate', value: '94.2%', change: '+2.1%', trending: 'up', color: 'emerald' },
-  { label: 'Avg Lateness', value: '12m', change: '-4m', trending: 'down', color: 'rose' },
-  { label: 'WFH Adoption', value: '32%', change: '+5%', trending: 'up', color: 'sky' },
-  { label: 'Active Personnel', value: '54/58', change: 'Stable', trending: 'neutral', color: 'amber' },
+  { label: 'Attendance Rate', value: '-', change: '-', trending: 'neutral', color: 'emerald' },
+  { label: 'Avg Lateness', value: '-', change: '-', trending: 'neutral', color: 'rose' },
+  { label: 'WFH Adoption', value: '-', change: '-', trending: 'neutral', color: 'sky' },
+  { label: 'Active Personnel', value: '-', change: '-', trending: 'neutral', color: 'amber' },
 ];
 
-const RECENT_ALERTS = [
-  { id: 1, type: 'Quota Breach', user: 'Liam Smith', desc: 'Medical leave limit exceeded by 2 days.', severity: 'high' },
-  { id: 2, type: 'Late Arrival', user: 'Noah Williams', desc: '5th late arrival this month (Rolling).', severity: 'medium' },
-  { id: 3, type: 'WFH Expiry', user: 'Emma Brown', desc: 'WFH approval ending in 48 hours.', severity: 'low' },
-];
+const RECENT_ALERTS: any[] = [];
 
 export default function AnalyticsView() {
   const [timeRange, setTimeRange] = useState('This Month');
@@ -114,15 +110,8 @@ export default function AnalyticsView() {
               </button>
             </div>
             
-            <div className="h-48 flex items-end justify-between gap-2 px-2">
-              {Array.from({ length: 14 }).map((_, i) => (
-                <div key={i} className="flex-1 flex flex-col gap-1 group relative">
-                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-zinc-800 px-2 py-1 rounded text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
-                    94%
-                  </div>
-                  <div className="w-full bg-emerald-500/30 rounded-t-lg group-hover:bg-emerald-500/50 transition-all cursor-pointer" style={{ height: isMounted ? `${60 + Math.random() * 40}%` : '50%' }}></div>
-                </div>
-              ))}
+            <div className="h-48 flex items-center justify-center border border-dashed border-white/5 rounded-[2rem] bg-white/[0.01]">
+              <span className="text-zinc-600 text-xs font-bold uppercase tracking-[0.2em]">-</span>
             </div>
             <div className="flex justify-between mt-6 text-[8px] font-black text-zinc-700 uppercase tracking-widest border-t border-white/5 pt-6 px-2">
               <span>14 Days Ago</span>
@@ -145,16 +134,8 @@ export default function AnalyticsView() {
               </div>
             </div>
 
-            <div className="h-48 relative">
-              <svg viewBox="0 0 400 120" className="w-full h-full">
-                <path d="M 0 40 Q 50 10 100 50 T 200 20 T 300 60 T 400 40" fill="none" stroke="#10b981" strokeWidth="3" className="opacity-50" />
-                <path d="M 0 100 Q 50 110 100 80 T 200 100 T 300 70 T 400 90" fill="none" stroke="#0ea5e9" strokeWidth="3" className="opacity-50" />
-              </svg>
-              <div className="absolute inset-0 flex flex-col justify-between text-[8px] font-black text-zinc-800 pointer-events-none py-1">
-                <div className="border-t border-white/5 w-full pt-1">09:00 AM</div>
-                <div className="border-t border-white/5 w-full pt-1">01:00 PM</div>
-                <div className="border-t border-white/5 w-full pt-1">06:00 PM</div>
-              </div>
+            <div className="h-48 flex items-center justify-center border border-dashed border-white/5 rounded-[2rem] bg-white/[0.01]">
+              <span className="text-zinc-600 text-xs font-bold uppercase tracking-[0.2em]">-</span>
             </div>
           </div>
         </div>
@@ -170,7 +151,7 @@ export default function AnalyticsView() {
                 Operational Watchlist
               </h3>
               <div className="flex gap-2">
-                <span className="px-3 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[9px] font-black rounded-full uppercase tracking-widest">3 High Risk</span>
+                <span className="px-3 py-1 bg-white/[0.05] border border-white/5 text-zinc-500 text-[9px] font-black rounded-full uppercase tracking-widest">- High Risk</span>
               </div>
             </div>
 
@@ -179,7 +160,7 @@ export default function AnalyticsView() {
                 <div key={alert.id} className="flex items-center justify-between p-5 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.05] transition-all group/item">
                   <div className="flex items-center gap-6">
                     <div className="w-12 h-12 rounded-xl bg-black/40 border border-white/5 flex items-center justify-center text-zinc-500 font-black text-xs uppercase group-hover/item:text-white transition-colors">
-                      {alert.user.split(' ').map(n => n[0]).join('')}
+                      {alert.user.split(' ').map((n: string) => n[0]).join('')}
                     </div>
                     <div>
                       <div className="flex items-center gap-2 mb-1">
@@ -200,6 +181,11 @@ export default function AnalyticsView() {
                   </button>
                 </div>
               ))}
+              {RECENT_ALERTS.length === 0 && (
+                <div className="py-12 flex flex-col items-center justify-center border border-dashed border-white/5 rounded-[2rem] bg-white/[0.01]">
+                  <p className="text-zinc-600 text-xs font-bold uppercase tracking-[0.2em]">-</p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -213,17 +199,17 @@ export default function AnalyticsView() {
             </h3>
             
             <div className="space-y-8 flex-1">
-              <QuotaItem label="Medical Leave" used={8} total={12} color="rose" />
-              <QuotaItem label="Casual Leave" used={2} total={4} color="amber" />
-              <QuotaItem label="Permissions" used={3.5} total={4} color="sky" />
+              <QuotaItem label="Medical Leave" color="rose" />
+              <QuotaItem label="Casual Leave" color="amber" />
+              <QuotaItem label="Permissions" color="sky" />
             </div>
 
             <div className="mt-10 pt-8 border-t border-white/5">
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Team Efficiency</p>
+              <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Team Efficiency</p>
                 <div className="flex items-end justify-between">
-                  <p className="text-2xl font-black text-white">Excellent</p>
-                  <p className="text-[10px] font-black text-emerald-400">98% Operative</p>
+                  <p className="text-2xl font-black text-white">-</p>
+                  <p className="text-[10px] font-black text-zinc-500">-</p>
                 </div>
               </div>
             </div>
@@ -244,24 +230,23 @@ function LegendItem({ color, label }: { color: string, label: string }) {
   );
 }
 
-function QuotaItem({ label, used, total, color }: { label: string, used: number, total: number, color: 'rose' | 'amber' | 'sky' }) {
-  const percentage = (used / total) * 100;
+function QuotaItem({ label, color }: { label: string, color: 'rose' | 'amber' | 'sky' }) {
   const colors = {
-    rose: 'bg-rose-500',
-    amber: 'bg-amber-500',
-    sky: 'bg-sky-500'
+    rose: 'bg-rose-500/25',
+    amber: 'bg-amber-500/25',
+    sky: 'bg-sky-500/25'
   };
 
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-end">
         <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{label}</p>
-        <p className="text-xs font-black text-white">{used} <span className="text-zinc-600">/ {total}</span></p>
+        <p className="text-xs font-black text-zinc-500">-</p>
       </div>
       <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
         <div 
           className={`h-full ${colors[color]} rounded-full transition-all duration-1000`} 
-          style={{ width: `${percentage}%` }}
+          style={{ width: `0%` }}
         ></div>
       </div>
     </div>

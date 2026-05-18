@@ -1,0 +1,407 @@
+import requests
+import re
+import json
+import html
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from sheets_service import (
+    TELEGRAM_TOKEN,
+    ADMIN_IDS,
+    get_employee_by_tg_id,
+    register_tg_id,
+    has_approved_wfh,
+    log_wfh_request,
+    update_wfh_status,
+    batch_update_wfh_statuses,
+    check_duplicate_wfh,
+    get_pending_wfh_requests,
+    get_pending_wfh_count,
+    append_attendance,
+    get_ist_now,
+    cancel_wfh_for_date
+)
+
+BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+_tg_pool = ThreadPoolExecutor(max_workers=4)
+
+def send_message(chat_id, text, reply_markup=None):
+    """Sends a text message via Telegram API."""
+    url = f"{BASE_URL}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        resp = requests.post(url, json=payload)
+        if resp.status_code != 200:
+            print(f"[Telegram] Error: {resp.status_code} - {resp.text}")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"[Telegram] Exception sending message to {chat_id}: {e}")
+        return None
+
+def edit_message_text(chat_id, message_id, text, reply_markup=None):
+    """Edits an existing text message via Telegram API."""
+    url = f"{BASE_URL}/editMessageText"
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        resp = requests.post(url, json=payload)
+        if resp.status_code != 200:
+            print(f"[Telegram] Error: {resp.status_code} - {resp.text}")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"[Telegram] Exception editing message {message_id}: {e}")
+        return None
+
+def handle_webhook(update):
+    """Main router for incoming Telegram updates."""
+    # --- CALLBACK QUERY (Buttons) ---
+    if "callback_query" in update:
+        handle_callback_query(update["callback_query"])
+        return
+
+    if "message" not in update:
+        return
+
+    msg = update["message"]
+    chat_id = msg["chat"]["id"]
+    user_id = str(msg["from"]["id"])
+    text = msg.get("text", "").strip()
+
+    # --- ADMIN LOGIC ---
+    if str(chat_id) in ADMIN_IDS:
+        if "reply_to_message" in msg:
+            handle_admin_reply(msg)
+            return
+        
+        # Guard against accidental approve/reject without reply
+        if text.lower() in ["approve", "reject"]:
+            send_message(chat_id, "⚠️ Please reply to the WFH request message.")
+            return
+
+    # --- USER COMMANDS ---
+    if text == "/start":
+        help_text = (
+            "Welcome to AttendTrack Bot!\n\n"
+            "<b>General Commands:</b>\n"
+            "/register &lt;EMP_ID&gt; — Link your account\n"
+            "/wfh &lt;YYYY-MM-DD&gt; &lt;YYYY-MM-DD&gt; — Request WFH\n"
+            "/cancel — Cancel your entire approved WFH request\n"
+            "/in — Clock IN (WFH only)\n"
+            "/out — Clock OUT (WFH only)\n"
+        )
+        
+        if str(chat_id) in ADMIN_IDS:
+            help_text += (
+                "\n<b>Admin Commands:</b>\n"
+                "/requests — View and handle pending WFH requests"
+            )
+            
+        send_message(chat_id, help_text)
+        return
+
+    if text.startswith("/register"):
+        handle_register(chat_id, user_id, text)
+        return
+
+    if text == "/in":
+        handle_attendance(chat_id, user_id, "IN")
+        return
+
+    if text == "/out":
+        handle_attendance(chat_id, user_id, "OUT")
+        return
+
+    if text.startswith("/wfh"):
+        handle_wfh_request(chat_id, user_id, text)
+        return
+
+    if text == "/cancel":
+        handle_cancel_wfh(chat_id, user_id)
+        return
+
+    # Only admins can use these buttons
+    if user_id in ADMIN_IDS:
+        if text == "/requests":
+            render_wfh_list(chat_id)
+            return
+
+    # Default
+    # send_message(chat_id, "Unknown command. Use /start to see available commands.")
+
+def handle_register(chat_id, user_id, text):
+    parts = text.split()
+    if len(parts) != 2:
+        send_message(chat_id, "Usage: /register &lt;EMP_ID&gt;")
+        return
+
+    emp_id = parts[1]
+    emp_name = register_tg_id(emp_id, user_id)
+    
+    if emp_name:
+        send_message(chat_id, f"✅ Registered successfully! Welcome, {emp_name}.")
+    else:
+        send_message(chat_id, "❌ Invalid Employee ID. Please check and try again.")
+
+def handle_attendance(chat_id, user_id, tag):
+    emp = get_employee_by_tg_id(user_id)
+    if not emp:
+        send_message(chat_id, "⚠️ Please register first using /register &lt;EMP_ID&gt;")
+        return
+
+    # Check for approved WFH
+    now = get_ist_now()
+    if not has_approved_wfh(now.date(), tg_id=user_id):
+        send_message(chat_id, "❌ You do not have an approved WFH request for today.")
+        return
+
+    emp_id = emp.get("employee_id", emp.get("id"))
+    emp_name = emp.get("name")
+    
+    try:
+        timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
+        send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
+        from event_bus import notify_clients
+        notify_clients()
+    except ValueError as ve:
+        send_message(chat_id, f"❌ {html.escape(str(ve))}")
+    except Exception as e:
+        send_message(chat_id, f"⚠️ An error occurred: {html.escape(str(e))}")
+
+def handle_cancel_wfh(chat_id, user_id):
+    emp = get_employee_by_tg_id(user_id)
+    if not emp:
+        send_message(chat_id, "⚠️ Please register first using /register &lt;EMP_ID&gt;")
+        return
+
+    now = get_ist_now()
+    today_str = now.strftime("%Y-%m-%d")
+    
+    if not has_approved_wfh(now.date(), tg_id=user_id):
+        send_message(chat_id, "❌ You do not have an approved WFH request for today to cancel.")
+        return
+
+    try:
+        success = cancel_wfh_for_date(today_str, tg_id=user_id)
+        if success:
+            send_message(chat_id, "✅ Your entire WFH request has been cancelled. You can now mark IN from the office dashboard.")
+            from event_bus import notify_clients
+            notify_clients()
+        else:
+            send_message(chat_id, "⚠️ Could not cancel WFH request. It might have already been cancelled or processed.")
+    except Exception as e:
+        send_message(chat_id, f"⚠️ An error occurred: {html.escape(str(e))}")
+
+def handle_wfh_request(chat_id, user_id, text):
+    emp = get_employee_by_tg_id(user_id)
+    if not emp:
+        send_message(chat_id, "⚠️ Please register first before requesting WFH.")
+        return
+
+    parts = text.split()
+    if len(parts) != 3:
+        send_message(chat_id, "Usage: /wfh &lt;YYYY-MM-DD&gt; &lt;YYYY-MM-DD&gt;")
+        return
+
+    start_date = parts[1]
+    end_date = parts[2]
+    
+    # Simple date format validation
+    date_regex = r"^\d{4}-\d{2}-\d{2}$"
+    if not re.match(date_regex, start_date) or not re.match(date_regex, end_date):
+        send_message(chat_id, "❌ Invalid date format. Use YYYY-MM-DD.")
+        return
+
+    # Check for duplicate request for the same start date
+    has_dup, dup_status = check_duplicate_wfh(user_id, start_date)
+    if has_dup:
+        send_message(chat_id, f"⚠️ You already have a WFH request starting on {start_date} which is <b>{dup_status.upper()}</b>.\n\n"
+                              f"Multiple requests for the same start date are not allowed unless the previous one was invalid or expired.")
+        return
+
+    emp_name = emp.get("name")
+    
+    # Log request in sheet
+    log_wfh_request(user_id, start_date, end_date, "pending")
+
+    # Notify all Admins
+    count = get_pending_wfh_count()
+    emp_name_esc = html.escape(emp_name if emp_name else "Unknown")
+    admin_text = (
+        f"📅 <b>New WFH Request</b>\n"
+        f"Employee: {emp_name_esc} ({user_id})\n"
+        f"Total pending requests: <b>{count}</b>\n\n"
+        "To check the list and approve/reject, hit the button below."
+    )
+    
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "📋 Check List", "callback_data": "list"}
+        ]]
+    }
+
+    for admin_id in ADMIN_IDS:
+        send_message(admin_id, admin_text, reply_markup=keyboard)
+    send_message(chat_id, "📝 Your WFH request has been sent for approval.")
+
+def handle_callback_query(query):
+    """Handles clicks on inline keyboard buttons."""
+    query_id = query["id"]
+    from_id = str(query["from"]["id"])
+    message = query.get("message", {})
+    if not message:
+        return # Cannot handle callbacks from inline bot results for now
+
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    data = query.get("data", "")
+
+    if not chat_id:
+        print(f"[Telegram] Warning: Received callback query without chat_id: {query}")
+        return
+
+    # Answer immediately to stop the loading spinner instantly
+    requests.post(f"{BASE_URL}/answerCallbackQuery", json={"callback_query_id": query_id})
+
+    if data == "list":
+        render_wfh_list(chat_id, message_id)
+    elif data == "noop":
+        pass
+    elif data.startswith("action|"):
+        handle_bulk_action(chat_id, message_id, data, message, query_id)
+
+def render_wfh_list(chat_id, message_id=None):
+    """Renders the WFH list with single actions and bulk actions. message_id provided if editing."""
+    pending = get_pending_wfh_requests()
+    if not pending:
+        text = "✅ <b>All caught up!</b> No pending WFH requests."
+        if message_id:
+            edit_message_text(chat_id, message_id, text)
+        else:
+            send_message(chat_id, text)
+        return
+
+    text = f"📋 <b>Pending WFH Requests ({len(pending)})</b>"
+    
+    keyboard = []
+    
+    for req in pending:
+        # Create a unique key for this request
+        key = f"{req['tg_id']}|{req['from']}|{req['to']}"
+        short_date = req['from'][5:] if len(req['from']) == 10 else req['from']
+        
+        btn_name = {"text": f"👤 {req['name']} ({short_date})", "callback_data": "noop"}
+        btn_approve = {"text": "✅", "callback_data": f"action|approve_single|{key}"}
+        btn_reject = {"text": "❌", "callback_data": f"action|reject_single|{key}"}
+        
+        keyboard.append([btn_name, btn_approve, btn_reject])
+
+    keyboard.append([
+        {"text": "✅ Approve ALL", "callback_data": "action|approve_all"},
+        {"text": "❌ Reject ALL", "callback_data": "action|reject_all"}
+    ])
+    
+    reply_markup = {"inline_keyboard": keyboard}
+    
+    if message_id:
+        edit_message_text(chat_id, message_id, text, reply_markup=reply_markup)
+    else:
+        send_message(chat_id, text, reply_markup=reply_markup)
+
+def handle_bulk_action(chat_id, message_id, data, current_message, query_id):
+    """Processes bulk or single approval or rejection."""
+    parts = data.split("|")
+    action = parts[1]
+    
+    pending = get_pending_wfh_requests()
+    results = []
+    
+    # Check if single action
+    if action in ["approve_single", "reject_single"]:
+        target_key = f"{parts[2]}|{parts[3]}|{parts[4]}"
+        status = "approved" if action == "approve_single" else "rejected"
+        
+        target_req = next((req for req in pending if f"{req['tg_id']}|{req['from']}|{req['to']}" == target_key), None)
+        
+        if target_req:
+            update_wfh_status(target_req['tg_id'], target_req['from'], target_req['to'], status)
+            emoji = "🎉" if status == "approved" else "😔"
+            msg = f"{emoji} Your WFH request from {target_req['from']} to {target_req['to']} has been {status.upper()}."
+            send_message(target_req['tg_id'], msg)
+            
+            # Re-render list
+            render_wfh_list(chat_id, message_id)
+            return
+        else:
+            requests.post(f"{BASE_URL}/answerCallbackQuery", json={
+                "callback_query_id": query_id, 
+                "text": "⚠️ Request not found or already processed.",
+                "show_alert": True
+            })
+            render_wfh_list(chat_id, message_id)
+            return
+
+    # Bulk actions:
+    if action in ["approve_all", "reject_all"]:
+        status = "approved" if action == "approve_all" else "rejected"
+        
+        # 1. Batch-update all statuses in a single API call
+        batch_update_wfh_statuses(pending, status)
+        
+        # 2. Send notifications in parallel
+        def _notify(req):
+            emoji = "🎉" if status == "approved" else "😔"
+            msg = f"{emoji} Your WFH request from {req['from']} to {req['to']} has been {status.upper()}."
+            send_message(req['tg_id'], msg)
+            return f"• {html.escape(req['name'])} ({status})"
+        
+        futures = [_tg_pool.submit(_notify, req) for req in pending]
+        results = [f.result() for f in futures]
+                
+        summary = "✅ <b>Action Completed</b>\n\n" + "\n".join(results)
+        if not results:
+            summary = "⚠️ No pending requests found to process."
+        edit_message_text(chat_id, message_id, summary)
+
+def handle_admin_reply(msg):
+    reply = msg.get("text", "").strip().lower()
+    original_text = msg["reply_to_message"].get("text", "")
+
+    if "WFH Request" not in original_text:
+        return
+
+    # Extract info from original message
+    try:
+        tg_id = re.search(r"TelegramID:\s*(\d+)", original_text).group(1)
+        start_date = re.search(r"From:\s*(\d{4}-\d{2}-\d{2})", original_text).group(1)
+        end_date = re.search(r"To:\s*(\d{4}-\d{2}-\d{2})", original_text).group(1)
+    except (AttributeError, IndexError):
+        send_message(chat_id, "❌ Failed to parse the original request info.")
+        return
+
+    if reply == "approve":
+        update_wfh_status(tg_id, start_date, end_date, "approved")
+        for aid in ADMIN_IDS:
+            send_message(aid, f"✅ Approved WFH for TG_ID {tg_id}.")
+        send_message(tg_id, f"🎉 Your WFH request from {start_date} to {end_date} has been APPROVED.")
+    elif reply == "reject":
+        update_wfh_status(tg_id, start_date, end_date, "rejected")
+        for aid in ADMIN_IDS:
+            send_message(aid, f"❌ Rejected WFH for TG_ID {tg_id}.")
+        send_message(tg_id, f"😔 Your WFH request from {start_date} to {end_date} was rejected.")
+    else:
+        send_message(chat_id, "ℹ️ Use 'approve' or 'reject' to handle the request.")

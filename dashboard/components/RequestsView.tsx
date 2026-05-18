@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Clock, 
@@ -12,6 +12,8 @@ import {
   ChevronUp,
   RotateCcw,
 } from 'lucide-react';
+import { fetchRequests, updateRequestStatus, subscribeToUpdates } from '@/lib/api';
+import { toast } from 'sonner';
 
 export type RequestStatus = 'pending' | 'approved' | 'rejected' | 'expired';
 export type RequestType = 'Work from Home' | 'Permission' | 'Medical Leave' | 'Casual Leave';
@@ -25,24 +27,15 @@ export interface RequestItem {
   toTime: string;
   type: RequestType;
   status: RequestStatus;
-  originalStatus?: 'approved' | 'rejected';
+  originalStatus?: 'approved' | 'rejected' | 'pending';
   timestamp: number;
   dateLabel: string;
+  tgRawId: string | number;
 }
 
 export default function RequestsView() {
-  const [requests, setRequests] = useState<RequestItem[]>([
-    { id: '1', name: 'Liam Smith', empId: 'EMP-0001', telegramId: '@liamsmith', fromTime: 'May 14', toTime: 'May 14', type: 'Work from Home', status: 'pending', timestamp: 1715751000000, dateLabel: 'Today' },
-    { id: '2', name: 'Noah Williams', empId: 'EMP-0042', telegramId: '@noahw', fromTime: '10:00 AM', toTime: '02:00 PM', type: 'Permission', status: 'pending', timestamp: 1715745600000, dateLabel: 'Today' },
-    { id: '3', name: 'Emma Brown', empId: 'EMP-0128', telegramId: '@emma_b', fromTime: 'May 15', toTime: 'May 17', type: 'Medical Leave', status: 'pending', timestamp: 1715734800000, dateLabel: 'Upcoming' },
-    { id: '4', name: 'James Wilson', empId: 'EMP-0089', telegramId: '@jwilson', fromTime: 'May 20', toTime: 'May 21', type: 'Casual Leave', status: 'pending', timestamp: 1715709600000, dateLabel: 'Upcoming' },
-    { id: '5', name: 'Sophia Garcia', empId: 'EMP-0156', telegramId: '@sophia_g', fromTime: 'May 12', toTime: 'May 13', type: 'Work from Home', status: 'approved', timestamp: 1715666400000, dateLabel: 'Yesterday' },
-    { id: '6', name: 'Lucas Miller', empId: 'EMP-0201', telegramId: '@lucas_m', fromTime: '01:00 PM', toTime: '04:00 PM', type: 'Permission', status: 'rejected', timestamp: 1715580000000, dateLabel: '2 Days Ago' },
-    { id: '7', name: 'Mia Davis', empId: 'EMP-0034', telegramId: '@mia_d', fromTime: 'May 10', toTime: 'May 12', type: 'Medical Leave', status: 'expired', originalStatus: 'approved', timestamp: 1715493600000, dateLabel: 'Expired' },
-    { id: '8', name: 'Ethan Hunt', empId: 'EMP-0007', telegramId: '@ethan_h', fromTime: 'May 1', toTime: 'May 2', type: 'Work from Home', status: 'expired', originalStatus: 'rejected', timestamp: 1715392800000, dateLabel: 'Expired' },
-    { id: '9', name: 'Olivia Martinez', empId: 'EMP-0099', telegramId: '@olivia_m', fromTime: 'May 14', toTime: 'May 16', type: 'Work from Home', status: 'pending', timestamp: 1715766000000, dateLabel: 'Today' },
-    { id: '10', name: 'William Clark', empId: 'EMP-0112', telegramId: '@william_c', fromTime: '11:00 AM', toTime: '01:00 PM', type: 'Permission', status: 'pending', timestamp: 1715765400000, dateLabel: 'Today' },
-  ]);
+  const [requests, setRequests] = useState<RequestItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     pending: true,
@@ -66,6 +59,75 @@ export default function RequestsView() {
     'Casual Leave': 1,
   };
 
+  const loadRequests = async () => {
+    try {
+      setLoading(true);
+      const backendRequests = await fetchRequests('all');
+      const mapped = backendRequests.map((req: any) => {
+        const fromDate = new Date(req.from);
+        const toDate = new Date(req.to);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let dateLabel = 'Today';
+        if (fromDate.getTime() > today.getTime()) {
+          dateLabel = 'Upcoming';
+        } else if (toDate.getTime() < today.getTime()) {
+          dateLabel = 'Expired';
+        } else if (fromDate.getTime() < today.getTime()) {
+          dateLabel = 'Ongoing';
+        }
+
+        let status = req.status.toLowerCase() as RequestStatus;
+        let originalStatus: 'approved' | 'rejected' | 'pending' | undefined = undefined;
+
+        if (dateLabel === 'Expired') {
+          originalStatus = status === 'pending' ? 'pending' : (status === 'approved' ? 'approved' : 'rejected');
+          status = 'expired';
+        }
+
+        return {
+          id: `${req.tg_id}-${req.from}-${req.to}`,
+          name: req.name,
+          empId: req.emp_id 
+            ? (req.emp_id.toString().startsWith('EMP-') 
+                ? req.emp_id.toString() 
+                : `EMP-${req.emp_id.toString().padStart(4, '0')}`) 
+            : '-',
+          telegramId: req.tg_id ? String(req.tg_id).trim() : '-',
+          fromTime: req.from,
+          toTime: req.to,
+          type: 'Work from Home' as RequestType,
+          status,
+          originalStatus,
+          timestamp: fromDate.getTime(),
+          dateLabel: dateLabel,
+          tgRawId: req.tg_id
+        };
+      });
+      setRequests(mapped);
+    } catch (err: any) {
+      console.error("Failed to load WFH requests:", err);
+      toast.error("Failed to load WFH requests: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRequests();
+
+    // Subscribe to SSE updates so that WFH requests dynamically sync in real-time
+    const unsubscribe = subscribeToUpdates(() => {
+      console.log("Real-time requests event received! Syncing roster...");
+      loadRequests();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   const sortRequests = (reqs: RequestItem[]) => {
     return [...reqs].sort((a, b) => {
       if (priorityWeights[a.type] !== priorityWeights[b.type]) {
@@ -75,26 +137,45 @@ export default function RequestsView() {
     });
   };
 
-  const handleAction = (id: string, status: RequestStatus) => {
-    setRequests(prev => prev.map(req => {
-      if (req.id === id) {
-        if (status === 'pending' && (req.status === 'approved' || req.status === 'rejected')) {
-          return { ...req, status: 'pending' };
-        }
-        return { ...req, status };
-      }
-      return req;
-    }));
+  const handleAction = async (id: string, status: RequestStatus) => {
+    const req = requests.find(r => r.id === id);
+    if (!req) return;
+    
+    let apiAction = 'pending';
+    if (status === 'approved') apiAction = 'approve';
+    else if (status === 'rejected') apiAction = 'reject';
+    
+    try {
+      await updateRequestStatus(apiAction, {
+        tg_id: req.tgRawId,
+        from: req.fromTime,
+        to: req.toTime,
+        emp_id: req.empId.replace('EMP-', ''),
+        name: req.name,
+        status: req.status
+      });
+      toast.success(`Successfully set request status to ${status}`);
+      loadRequests();
+    } catch (err: any) {
+      toast.error(`Action failed: ${err.message}`);
+    }
   };
 
-  const handleBulkAction = (currentStatus: RequestStatus, targetStatus: RequestStatus) => {
-    const filter = sectionFilters[currentStatus];
-    setRequests(prev => prev.map(req => {
-      if (req.status === currentStatus && (filter === 'All' || req.type === filter)) {
-        return { ...req, status: targetStatus };
-      }
-      return req;
-    }));
+  const handleBulkAction = async (currentStatus: RequestStatus, targetStatus: RequestStatus) => {
+    if (currentStatus !== 'pending') {
+      toast.error("Bulk actions are only allowed on pending requests.");
+      return;
+    }
+    
+    let apiAction = targetStatus === 'approved' ? 'approve_all' : 'reject_all';
+    
+    try {
+      await updateRequestStatus(apiAction);
+      toast.success(`Successfully ${targetStatus} all pending requests`);
+      loadRequests();
+    } catch (err: any) {
+      toast.error(`Bulk action failed: ${err.message}`);
+    }
   };
 
   const renderSection = (title: string, status: RequestStatus) => {
@@ -260,10 +341,20 @@ function RequestCard({ req, onAction }: { req: RequestItem, onAction: (s: Reques
         <div className="pt-1 flex-shrink-0">
           <span className={`px-3 py-1 ${
             req.status === 'expired' 
-              ? (req.originalStatus === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20')
+              ? (req.originalStatus === 'approved' 
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                  : req.originalStatus === 'rejected'
+                    ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                    : 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20')
               : (req.dateLabel === 'Today' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20')
           } border text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-black/20`}>
-            {req.status === 'expired' ? 'Expired' : req.dateLabel}
+            {req.status === 'expired' 
+              ? (req.originalStatus === 'approved' 
+                  ? 'Expired (Approved)' 
+                  : req.originalStatus === 'rejected'
+                    ? 'Expired (Denied)'
+                    : 'Expired (No Action Taken)')
+              : req.dateLabel}
           </span>
         </div>
       </div>
@@ -283,11 +374,6 @@ function RequestCard({ req, onAction }: { req: RequestItem, onAction: (s: Reques
             <p className="text-[10px] font-black text-zinc-500 mb-1 uppercase tracking-widest">To</p>
             <p className="text-base text-white font-black">{req.toTime}</p>
           </div>
-        </div>
-
-        <div className="bg-black/40 rounded-2xl p-4 border border-white/[0.03] flex items-center justify-between">
-          <span className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">Telegram</span>
-          <span className="text-base font-black text-white">{req.telegramId}</span>
         </div>
       </div>
 

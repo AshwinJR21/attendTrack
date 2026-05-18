@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Sun, Moon, Target, Calendar, Search, X, LogOut, Power } from 'lucide-react';
+import { fetchEmployees, fetchSessions, subscribeToUpdates, fetchRangeStats, fetchDailyMinutes, postAttendance } from '@/lib/api';
+import { toast } from 'sonner';
 
 type ViewMode = 'focused';
 
@@ -27,7 +29,7 @@ interface StatPeriod {
 }
 
 interface Person {
-  id: number;
+  id: string;
   name: string;
   phone: string;
   telegramId: string;
@@ -57,7 +59,7 @@ export default function ProgressTracker() {
   const [isManualZoom, setIsManualZoom] = useState(false);
   const [activeDateLabel, setActiveDateLabel] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [activeDurationTab, setActiveDurationTab] = useState<DurationTab>('day');
   const [isMounted, setIsMounted] = useState(false);
   const [heatmapMode, setHeatmapMode] = useState<'current' | 'rolling'>('current');
@@ -87,75 +89,158 @@ export default function ProgressTracker() {
     return diffMs / 60000;
   };
 
-  // Initialize people
-  useEffect(() => {
-    const initialMinutes = getMinutesFromChartStart(new Date());
-    setPeople(RANDOM_NAMES.map((name, index) => {
-      const locations: ('Office' | 'Home')[] = ['Office', 'Home'];
-      
-      const heatmapData: Record<string, number> = {};
-      const todayDate = new Date();
-      for (let i = 0; i < 365; i++) {
-        const d = new Date(todayDate);
-        d.setDate(todayDate.getDate() - i);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        const dateStr = `${y}-${m}-${day}`;
-        
-        const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-        if (isWeekend) {
-          heatmapData[dateStr] = Math.random() > 0.9 ? Math.random() * 4 : 0;
-        } else {
-          heatmapData[dateStr] = Math.random() > 0.1 ? 5 + Math.random() * 5 : 0;
-        }
-      }
+  // State for focused employee details fetched dynamically
+  const [focusedStats, setFocusedStats] = useState<Record<string, StatPeriod>>({
+    week: { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 },
+    month: { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 },
+    year: { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 },
+    custom: { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 },
+  });
+  const [focusedHeatmap, setFocusedHeatmap] = useState<Record<string, number>>({});
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [loadingData, setLoadingData] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-      return {
-        id: index,
-        name,
-        phone: `+1 (555) ${Math.floor(100 + Math.random() * 900)}-${Math.floor(1000 + Math.random() * 9000)}`,
-        telegramId: `@${name.replace(' ', '').toLowerCase()}_tgt`,
-        location: locations[Math.floor(Math.random() * locations.length)],
-        sessions: [{ start: Math.max(0, initialMinutes - 60), end: null, type: 'green' }],
-        heatmapData,
-        stats: {
-          week: {
-            durationWorkedStr: `${Math.floor(20 + Math.random() * 20)}h ${Math.floor(Math.random() * 60)}m`,
-            durationBreakStr: `${Math.floor(2 + Math.random() * 5)}h ${Math.floor(Math.random() * 60)}m`,
-            inSessions: Math.floor(10 + Math.random() * 15),
-            outSessions: Math.floor(10 + Math.random() * 15),
-            wfhDays: Math.floor(Math.random() * 3),
-            officeDays: Math.floor(2 + Math.random() * 3),
+  const loadLiveData = async () => {
+    try {
+      const employees = await fetchEmployees();
+      const todayDateStr = new Date().toISOString().split('T')[0];
+      const sessionsMap = await fetchSessions(todayDateStr);
+      
+      const mergedPeople: Person[] = employees.map(emp => {
+        const empSessions = sessionsMap[emp.id] || [];
+        
+        const finalSessions: Session[] = empSessions.length > 0 
+          ? empSessions.map(s => ({
+              start: s.start,
+              end: s.end,
+              type: s.type
+            }))
+          : [{ 
+              start: 480, // Start at 8 AM default
+              end: null, 
+              type: emp.current_status.toLowerCase() === 'in' ? 'green' : 'red' 
+            }];
+
+        return {
+          id: emp.id ? String(emp.id).trim() : '-',
+          name: emp.name ? String(emp.name).trim() : '-',
+          phone: emp.phone ? String(emp.phone).trim() : '-',
+          telegramId: emp.telegram_id ? String(emp.telegram_id).trim() : '-',
+          location: (emp.location === 'Home' || emp.has_wfh) ? 'Home' : 'Office',
+          sessions: finalSessions,
+          stats: {
+            week: { durationWorkedStr: 'Loading...', durationBreakStr: 'Loading...', inSessions: 0, outSessions: 0 },
+            month: { durationWorkedStr: 'Loading...', durationBreakStr: 'Loading...', inSessions: 0, outSessions: 0 },
+            year: { durationWorkedStr: 'Loading...', durationBreakStr: 'Loading...', inSessions: 0, outSessions: 0 },
+            custom: { durationWorkedStr: 'Loading...', durationBreakStr: 'Loading...', inSessions: 0, outSessions: 0 },
           },
-          month: {
-            durationWorkedStr: `${Math.floor(120 + Math.random() * 40)}h ${Math.floor(Math.random() * 60)}m`,
-            durationBreakStr: `${Math.floor(15 + Math.random() * 10)}h ${Math.floor(Math.random() * 60)}m`,
-            inSessions: Math.floor(40 + Math.random() * 30),
-            outSessions: Math.floor(40 + Math.random() * 30),
-            wfhDays: Math.floor(Math.random() * 10),
-            officeDays: Math.floor(10 + Math.random() * 10),
-          },
-          year: {
-            durationWorkedStr: `${Math.floor(1400 + Math.random() * 400)}h ${Math.floor(Math.random() * 60)}m`,
-            durationBreakStr: `${Math.floor(150 + Math.random() * 100)}h ${Math.floor(Math.random() * 60)}m`,
-            inSessions: Math.floor(400 + Math.random() * 300),
-            outSessions: Math.floor(400 + Math.random() * 300),
-            wfhDays: Math.floor(Math.random() * 100),
-            officeDays: Math.floor(100 + Math.random() * 100),
-          },
-          custom: {
-            durationWorkedStr: `${Math.floor(40 + Math.random() * 200)}h ${Math.floor(Math.random() * 60)}m`,
-            durationBreakStr: `${Math.floor(4 + Math.random() * 20)}h ${Math.floor(Math.random() * 60)}m`,
-            inSessions: Math.floor(20 + Math.random() * 100),
-            outSessions: Math.floor(20 + Math.random() * 100),
-            wfhDays: Math.floor(Math.random() * 20),
-            officeDays: Math.floor(5 + Math.random() * 20),
-          }
-        }
-      };
-    }));
+          heatmapData: {}
+        };
+      });
+
+      setPeople(mergedPeople);
+    } catch (err: any) {
+      console.error("Error loading live attendance data:", err);
+      setError(err.message || "Failed to sync with database");
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  // Initial data fetch and SSE connection
+  useEffect(() => {
+    loadLiveData();
+    
+    // Subscribe to SSE updates for real-time dashboard sync
+    const unsubscribe = subscribeToUpdates(() => {
+      console.log("Realtime event received! Reloading tactical timeline...");
+      loadLiveData();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
+
+  // Dynamic focused employee stats and activity heatmap fetching
+  useEffect(() => {
+    if (selectedPersonId === null) return;
+    
+    const loadFocusedData = async () => {
+      setLoadingStats(true);
+      try {
+        const today = new Date();
+        const getLocalDateStr = (d: Date) => d.toISOString().split('T')[0];
+
+        // 1. Fetch Heatmap
+        const heatmapResult = await fetchDailyMinutes();
+        const userHeatmap = heatmapResult[selectedPersonId] || {};
+        setFocusedHeatmap(userHeatmap);
+
+        // 2. Fetch Range Stats helper
+        const getStatsForRange = async (start: string, end: string): Promise<StatPeriod> => {
+          try {
+            const statsMap = await fetchRangeStats(start, end);
+            const userStats = statsMap[selectedPersonId] || {
+              work_mins: 0,
+              break_mins: 0,
+              in_sessions: 0,
+              out_sessions: 0,
+              office_days: 0,
+              wfh_days: 0
+            };
+            
+            const wH = Math.floor(userStats.work_mins / 60);
+            const wM = Math.floor(userStats.work_mins % 60);
+            const bH = Math.floor(userStats.break_mins / 60);
+            const bM = Math.floor(userStats.break_mins % 60);
+
+            return {
+              durationWorkedStr: `${wH}h ${wM}m`,
+              durationBreakStr: `${bH}h ${bM}m`,
+              inSessions: userStats.in_sessions,
+              outSessions: userStats.out_sessions,
+              officeDays: userStats.office_days,
+              wfhDays: userStats.wfh_days
+            };
+          } catch (e) {
+            console.error("Failed to fetch range stats:", e);
+            return { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 };
+          }
+        };
+
+        // Compute Date Ranges
+        const weekStart = new Date();
+        weekStart.setDate(today.getDate() - 7);
+        const weekStats = await getStatsForRange(getLocalDateStr(weekStart), getLocalDateStr(today));
+
+        const monthStart = new Date();
+        monthStart.setDate(today.getDate() - 30);
+        const monthStats = await getStatsForRange(getLocalDateStr(monthStart), getLocalDateStr(today));
+
+        const yearStart = new Date();
+        yearStart.setDate(today.getDate() - 365);
+        const yearStats = await getStatsForRange(getLocalDateStr(yearStart), getLocalDateStr(today));
+
+        const customStats = await getStatsForRange(customStartDate, customEndDate);
+
+        setFocusedStats({
+          week: weekStats,
+          month: monthStats,
+          year: yearStats,
+          custom: customStats
+        });
+
+      } catch (err) {
+        console.error("Error fetching focused employee stats:", err);
+      } finally {
+        setLoadingStats(false);
+      }
+    };
+
+    loadFocusedData();
+  }, [selectedPersonId, customStartDate, customEndDate]);
 
   // Update clock
   useEffect(() => {
@@ -169,7 +254,7 @@ export default function ProgressTracker() {
     const timer = setTimeout(() => {
       if (scrollContainerRef.current) {
         const totalWidth = scrollContainerRef.current.scrollWidth;
-        const targetHours = new Date().getHours() + new Date().getMinutes() / 60; 
+        const targetHours = 14.5; // Centers at 2:30 PM so viewport shows 10 AM to 7 PM
         const scrollPos = (targetHours / 24) * totalWidth - (scrollContainerRef.current.clientWidth / 2);
         scrollContainerRef.current.scrollLeft = Math.max(0, scrollPos);
       }
@@ -243,6 +328,16 @@ export default function ProgressTracker() {
         return aName.localeCompare(bName);
       });
   }, [people, searchQuery, selectedPersonId]);
+  
+  // Dynamic calculation for employees checked in after 10:00 AM
+  const lateCount = useMemo(() => {
+    return people.filter(p => {
+      const greenSessions = p.sessions.filter(s => s.type === 'green');
+      if (greenSessions.length === 0) return false;
+      const firstCheckIn = Math.min(...greenSessions.map(s => s.start));
+      return firstCheckIn > 600; // 10:00 AM in minutes
+    }).length;
+  }, [people]);
 
   // Clear selection if search query changes
   useEffect(() => {
@@ -254,15 +349,20 @@ export default function ProgressTracker() {
   // Buffering effect on search
   const isBuffering = searchQuery !== "" && filteredPeople.length !== 1;
 
-  const togglePersonStatus = (id: number) => {
-    const now = getMinutesFromChartStart(new Date());
-    setPeople(prev => prev.map(p => {
-      if (p.id !== id) return p;
-      const sessions = [...p.sessions];
-      sessions[sessions.length - 1].end = now;
-      sessions.push({ start: now, end: null, type: sessions[sessions.length - 1].type === 'green' ? 'red' : 'green' });
-      return { ...p, sessions };
-    }));
+  const togglePersonStatus = async (id: string) => {
+    const person = people.find(p => p.id === id);
+    if (!person) return;
+    
+    const isCurrentlyIn = person.sessions[person.sessions.length - 1].type === 'green';
+    const action = isCurrentlyIn ? 'out' : 'in';
+    
+    try {
+      await postAttendance(id, person.name, action);
+      toast.success(`Successfully posted check-${action} override for ${person.name}`);
+      loadLiveData();
+    } catch (err: any) {
+      toast.error(`Override check-${action} failed: ${err.message}`);
+    }
   };
 
   const getDateFromChartMinutes = (mins: number) => {
@@ -383,7 +483,7 @@ export default function ProgressTracker() {
            }
          });
       } else {
-         const totalHours = person.heatmapData[targetDateStr] || 0;
+         const totalHours = focusedHeatmap[targetDateStr] || 0;
          let distributed = 0;
          for (let h = 9; h < 18 && distributed < totalHours; h++) {
            const val = Math.min(1, totalHours - distributed);
@@ -472,7 +572,7 @@ export default function ProgressTracker() {
         const dayOfWeek = d.getDay();
         const dateStr = getLocalDateStr(d);
         const isToday = dateStr === getLocalDateStr(today);
-        const hours = isToday ? getLiveHoursToday(person) : (person.heatmapData[dateStr] || 0);
+        const hours = isToday ? getLiveHoursToday(person) : (focusedHeatmap[dateStr] || 0);
         currentWeek[dayOfWeek] = { date: d, hours, dateStr };
         
         if (dayOfWeek === 6) {
@@ -539,7 +639,7 @@ export default function ProgressTracker() {
                      {chunk.map((d, idx) => {
                        const dateStr = getLocalDateStr(d);
                        const isToday = dateStr === getLocalDateStr(today);
-                       const hours = isToday ? getLiveHoursToday(person) : (person.heatmapData[dateStr] || 0);
+                       const hours = isToday ? getLiveHoursToday(person) : (focusedHeatmap[dateStr] || 0);
                        return (
                          <div key={idx} className="group relative flex flex-col items-center gap-2">
                            <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl transition-all duration-300 ${getHeatmapColor(hours)} hover:scale-110 hover:ring-2 ring-emerald-500/50 flex items-center justify-center shadow-sm`}>
@@ -578,7 +678,7 @@ export default function ProgressTracker() {
              {dates.map((d, idx) => {
                const dateStr = getLocalDateStr(d);
                const isToday = dateStr === getLocalDateStr(today);
-               const hours = isToday ? getLiveHoursToday(person) : (person.heatmapData[dateStr] || 0);
+               const hours = isToday ? getLiveHoursToday(person) : (focusedHeatmap[dateStr] || 0);
                return (
                  <div key={idx} className="group relative flex flex-col items-center gap-2">
                    <div className={`${squareSize} transition-all duration-300 ${getHeatmapColor(hours)} hover:scale-110 hover:ring-4 ring-emerald-500/50 flex items-center justify-center shadow-sm`}>
@@ -801,7 +901,7 @@ export default function ProgressTracker() {
           </div>
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-amber-500/50 uppercase tracking-widest mb-1">Tactical Late</span>
-            <span className="text-2xl font-black text-amber-500">2</span>
+            <span className="text-2xl font-black text-amber-500">{people.length > 0 ? lateCount : '-'}</span>
           </div>
         </div>
 
@@ -849,9 +949,17 @@ export default function ProgressTracker() {
                           setSelectedPersonId(person.id);
                           setSearchQuery(""); // Clear search if selecting directly
                         }}
-                        className={`${rowHeightClass} px-5 flex items-center gap-3 text-base font-black text-zinc-400 border-l-4 ${isGreen ? 'border-emerald-500/80' : 'border-rose-500/80'} border-b border-white/[0.03] even:bg-white/[0.01] hover:bg-white/[0.04] transition-all group whitespace-nowrap overflow-hidden cursor-pointer`}
+                        className={`${rowHeightClass} px-5 flex items-center gap-3 text-base font-black text-zinc-400 border-l-4 ${
+                          isGreen 
+                            ? (person.location === 'Home' ? 'border-cyan-500/80' : 'border-emerald-500/80') 
+                            : 'border-rose-500/80'
+                        } border-b border-white/[0.03] even:bg-white/[0.01] hover:bg-white/[0.04] transition-all group whitespace-nowrap overflow-hidden cursor-pointer`}
                       >
-                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isGreen ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'}`}></div>
+                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          isGreen 
+                            ? (person.location === 'Home' ? 'bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]') 
+                            : 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'
+                        }`}></div>
                         <span className="truncate group-hover:text-white transition-colors uppercase tracking-tight">{person.name}</span>
                       </div>
                     );
@@ -926,8 +1034,10 @@ export default function ProgressTracker() {
                                     onMouseLeave={() => handleSessionMouseLeave(session)}
                                     className={`absolute top-0 h-full rounded-full transition-all duration-700 ease-out cursor-pointer hover:brightness-110 ${
                                       session.type === 'green' 
-                                        ? 'bg-gradient-to-r from-emerald-600 via-emerald-500 ' + (isGrowing ? 'to-emerald-200' : 'to-emerald-400') + ' shadow-[0_0_25px_rgba(16,185,129,0.15)]' 
-                                        : 'bg-gradient-to-r from-rose-600 via-rose-500 ' + (isGrowing ? 'to-rose-200' : 'to-rose-400') + ' shadow-[0_0_25px_rgba(244,63,94,0.15)]'
+                                        ? (person.location === 'Home'
+                                            ? 'bg-gradient-to-r from-cyan-600 via-cyan-500 ' + (isGrowing ? 'to-cyan-400/90' : 'to-cyan-400') + ' shadow-[0_0_25px_rgba(6,182,212,0.15)]'
+                                            : 'bg-gradient-to-r from-emerald-600 via-emerald-500 ' + (isGrowing ? 'to-emerald-400/90' : 'to-emerald-400') + ' shadow-[0_0_25px_rgba(16,185,129,0.15)]')
+                                        : 'bg-gradient-to-r from-rose-600 via-rose-500 ' + (isGrowing ? 'to-rose-400/90' : 'to-rose-400') + ' shadow-[0_0_25px_rgba(244,63,94,0.15)]'
                                     }`}
                                     style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
                                   />
@@ -995,19 +1105,23 @@ export default function ProgressTracker() {
                             if (customStartDate === todayStr) {
                               stats = getDailyStats(person);
                             } else {
-                              // Mock daily data for a past day
+                              const pastHours = focusedHeatmap[customStartDate] || 0;
+                              const wH = Math.floor(pastHours);
+                              const wM = Math.floor((pastHours % 1) * 60);
                               stats = {
-                                durationWorkedStr: `${Math.floor(6 + Math.random() * 4)}h ${Math.floor(Math.random() * 60)}m`,
-                                durationBreakStr: `${Math.floor(0 + Math.random() * 2)}h ${Math.floor(Math.random() * 60)}m`,
-                                inSessions: Math.floor(2 + Math.random() * 4),
-                                outSessions: Math.floor(2 + Math.random() * 4),
+                                durationWorkedStr: `${wH}h ${wM}m`,
+                                durationBreakStr: '0h 0m',
+                                inSessions: pastHours > 0 ? 1 : 0,
+                                outSessions: pastHours > 0 ? 1 : 0,
+                                officeDays: pastHours > 0 ? 1 : 0,
+                                wfhDays: 0
                               };
                             }
                           } else {
-                            stats = person.stats.custom;
+                            stats = focusedStats.custom;
                           }
                         } else {
-                          stats = person.stats[activeDurationTab];
+                          stats = focusedStats[activeDurationTab] || { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0 };
                         }
                         
                         const isDayView = activeDurationTab === 'day' || (activeDurationTab === 'custom' && customStartDate === customEndDate);
@@ -1023,17 +1137,21 @@ export default function ProgressTracker() {
                               <div className="w-px h-12 bg-white/5 hidden md:block"></div>
                               <div className="flex flex-col gap-1">
                                 <span className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.2em]">Employee ID</span>
-                                <span className="text-2xl font-black text-white">EMP-{person.id.toString().padStart(4, '0')}</span>
+                                <span className="text-2xl font-black text-white">
+                                  {person.id && person.id !== '-' 
+                                    ? (person.id.toString().replace(/^EMP-/i, '').replace(/^0+/, '') || '0')
+                                    : '-'}
+                                </span>
                               </div>
                               <div className="w-px h-12 bg-white/5 hidden md:block"></div>
                               <div className="flex flex-col gap-1">
                                 <span className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.2em]">Phone Number</span>
-                                <span className="text-2xl font-black text-white">{person.phone}</span>
+                                <span className="text-2xl font-black text-white">{person.phone && person.phone !== '-' ? person.phone : '-'}</span>
                               </div>
                               <div className="w-px h-12 bg-white/5 hidden md:block"></div>
                               <div className="flex flex-col gap-1">
                                 <span className="text-[11px] font-black text-zinc-500 uppercase tracking-[0.2em]">Telegram ID</span>
-                                <span className="text-2xl font-black text-emerald-400">{person.telegramId}</span>
+                                <span className="text-2xl font-black text-emerald-400">{person.telegramId && person.telegramId !== '-' ? person.telegramId : '-'}</span>
                               </div>
                             </div>
 
