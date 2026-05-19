@@ -34,6 +34,11 @@ export interface RequestItem {
 }
 
 export default function RequestsView() {
+  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const user = stored ? JSON.parse(stored) : null;
+  const isEmployee = user && user.role === 'employee';
+  const isLoggedIn = !!user;
+
   const [requests, setRequests] = useState<RequestItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -115,6 +120,11 @@ export default function RequestsView() {
   };
 
   useEffect(() => {
+    if (!isLoggedIn || isEmployee) {
+      setLoading(false);
+      return;
+    }
+
     loadRequests();
 
     // Subscribe to SSE updates so that WFH requests dynamically sync in real-time
@@ -126,7 +136,7 @@ export default function RequestsView() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [isLoggedIn, isEmployee]);
 
   const sortRequests = (reqs: RequestItem[]) => {
     return [...reqs].sort((a, b) => {
@@ -292,6 +302,37 @@ export default function RequestsView() {
       </div>
     );
   };
+
+  if (!isLoggedIn) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+        <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center border border-white/10 mb-8">
+          <User size={36} className="text-zinc-500 animate-pulse" />
+        </div>
+        <h2 className="text-2xl font-black text-white uppercase tracking-wider mb-2">Authentication Required</h2>
+        <p className="text-sm font-bold text-zinc-500 max-w-sm leading-relaxed uppercase tracking-wider">
+          Please log in as an authorized operator (Admin or Manager) to access requests.
+        </p>
+      </div>
+    );
+  }
+
+  if (isEmployee) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+        <div className="w-20 h-20 bg-emerald-500/10 rounded-3xl flex items-center justify-center border border-emerald-500/20 mb-8">
+          <Clock size={36} className="text-emerald-500" />
+        </div>
+        <h2 className="text-2xl font-black text-emerald-400 uppercase tracking-wider mb-2">Employee Portal Coming Soon</h2>
+        <p className="text-sm font-medium text-zinc-500 max-w-md leading-relaxed">
+          Your personal WFH request logs and new request submission portal are being prepared for a future system update! 
+          <span className="block mt-4 text-[10px] font-black text-zinc-600 uppercase tracking-widest">
+            Note: Admin or Manager authorization is required to view the global approval queue.
+          </span>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full overflow-y-auto custom-scrollbar animate-in fade-in slide-in-from-bottom-8 duration-1000">
