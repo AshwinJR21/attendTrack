@@ -208,7 +208,7 @@ When setting up your workforce system on the second Ubuntu laptop, follow this g
 Since `.env`, `credentials.json`, and `id_cache.json` are listed in `.gitignore` on both `dashboard` and `main` branches, **Git will never touch, delete, or overwrite your local configuration files** when running a pull!
 
 However, as a standard security best practice, make sure you copy or backup these three critical configuration files from your old machine:
-1.  **`backend/.env`**: Contains all your API tokens, chat IDs, secret keys, and encrypted permissions.
+1.  **`backend/.env`**: Contains all your API tokens and Telegram bot configurations.
 2.  **`backend/credentials.json`**: Your Google service account JSON key file.
 3.  **`backend/id_cache.json`** (Optional): Holds cached Google Sheet spreadsheet/folder IDs. If missing, the backend will automatically search your Google Drive to locate the sheets, but carrying this file saves API calls!
 
@@ -223,45 +223,6 @@ git checkout main
 # 2. Pull the latest unified changes
 git pull origin main
 ```
-
----
-
-## 7b. Managing Administrative Telegram Permissions (`manage_auth.py`)
-
-The unified backend includes an encrypted authorization list inside your `.env` under the variable `ALLOWED_TELEGRAM_IDS`. Only Telegram user IDs on this list can request OTP codes for administrative password changes.
-
-To encrypt and protect this list, the system uses a master key which **must be set in your `backend/.env` file**:
-```env
-AUTH_MASTER_KEY=a_very_strong_secret_key_here
-```
-*(Make sure this is set to a long, secure secret string!).*
-
-The utility script `backend/manage_auth.py` is used to add, remove, or update these permitted Telegram IDs.
-
-### 1. Bootstrapping (Adding the First Telegram ID)
-When starting on a fresh system where no permitted IDs exist yet, the script automatically enters **BOOTSTRAP mode**. This allows you to add your first administrator ID without requiring a Telegram check or OTP verification:
-```bash
-cd backend
-source venv/bin/activate
-python manage_auth.py initial_setup add <YOUR_TELEGRAM_CHAT_ID>
-```
-*Note: Replace `<YOUR_TELEGRAM_CHAT_ID>` with your numerical Telegram chat ID (e.g., `8723648`).*
-
-### 2. Standard Usage (Adding, Removing, or Updating)
-Once the first ID is registered, all future changes require an active Administrator authentication. The script will look up the administrator in your Google Sheet, send a 6-digit verification OTP to their Telegram, and prompt you to input the code:
-
-*   **To Add a permitted Telegram ID**:
-    ```bash
-    python manage_auth.py <admin_name_or_id> add <target_telegram_id>
-    ```
-*   **To Delete a permitted Telegram ID**:
-    ```bash
-    python manage_auth.py <admin_name_or_id> del <target_telegram_id>
-    ```
-*   **To Update an existing Telegram ID**:
-    ```bash
-    python manage_auth.py <admin_name_or_id> update <old_telegram_id> <new_telegram_id>
-    ```
 
 ---
 
