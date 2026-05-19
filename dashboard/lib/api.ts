@@ -169,6 +169,10 @@ export async function fetchRequests(status: string = 'pending'): Promise<any[]> 
   const user = stored ? JSON.parse(stored) : null;
   const requesterId = user ? user.id : '';
 
+  if (!requesterId) {
+    return [];
+  }
+
   const response = await fetch(`${API_BASE_URL}/api/requests?status=${status}&requester_id=${encodeURIComponent(requesterId)}`);
   if (!response.ok) {
     throw new Error('Failed to fetch requests');
