@@ -353,7 +353,7 @@ export default function App() {
 
   const fetchTodayMinutes = useCallback(async () => {
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getDateStr(0);
       const res = await fetch(`${API_BASE}/daily-minutes?dates=${today}`);
       const data = await res.json();
       setTodayCompleted(data[today] || {});
