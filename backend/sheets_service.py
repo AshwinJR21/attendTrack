@@ -5,9 +5,6 @@ import ssl
 import time
 import threading
 import bcrypt
-import base64
-import hashlib
-from cryptography.fernet import Fernet
 
 import os
 from dotenv import load_dotenv
@@ -106,37 +103,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 _admin_raw = os.getenv("ADMIN_CHAT_ID", "").strip()
 ADMIN_IDS = [x.strip() for x in _admin_raw.split(",") if x.strip()]
 
-# Auth Security Helpers
-def _get_fernet():
-    key = os.getenv("AUTH_MASTER_KEY")
-    if not key:
-        # Fallback to a derived key if not set (not ideal for prod, but prevents crash)
-        # In production, AUTH_MASTER_KEY must be set.
-        key = hashlib.sha256(b"attendance-tracker-system-salt").digest()
-    else:
-        key = hashlib.sha256(key.encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(key))
-
-def get_allowed_telegram_ids():
-    encrypted = os.getenv("ALLOWED_TELEGRAM_IDS", "")
-    if not encrypted:
-        return []
-    try:
-        f = _get_fernet()
-        decrypted = f.decrypt(encrypted.encode()).decode()
-        return [x.strip() for x in decrypted.split(",") if x.strip()]
-    except Exception as e:
-        print(f"Auth decryption failed: {e}")
-        return []
-
-def set_allowed_telegram_ids(ids_list):
-    f = _get_fernet()
-    data = ",".join(ids_list)
-    encrypted = f.encrypt(data.encode()).decode()
-    # Note: This only sets it in the current process env. 
-    # manage_auth.py will handle writing to .env file.
-    os.environ["ALLOWED_TELEGRAM_IDS"] = encrypted
-    return encrypted
 
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
