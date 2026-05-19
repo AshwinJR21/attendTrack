@@ -3,10 +3,10 @@ Description=Attendance Tracker Next.js Dashboard Service
 After=network.target atbe.service
 
 [Service]
-User=ashwin
-WorkingDirectory=/home/ashwin/Desktop/attendance-tracker/dashboard
-Environment=PATH=/home/ashwin/.bun/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/ashwin/.bun/bin/bun run dev -- --hostname 0.0.0.0 --port 3000
+User=<USERNAME>
+WorkingDirectory=/home/<USERNAME>/Desktop/attendance-tracker/dashboard
+Environment=PATH=/home/<USERNAME>/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/<USERNAME>/.bun/bin/bun run dev -- --hostname 0.0.0.0 --port 3000
 Restart=always
 RestartSec=5
 
