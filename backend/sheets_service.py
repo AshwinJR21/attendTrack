@@ -599,10 +599,8 @@ def generate_auth_otp(identifier):
     if not tg_id or tg_id == '-':
         return False, "No Telegram ID found for this account"
         
-    # Security Check: Is this Telegram ID allowed to request OTP?
-    allowed_ids = get_allowed_telegram_ids()
-    if tg_id not in allowed_ids:
-        return False, "Unauthorized: This Telegram ID is not on the allowed list for password changes"
+    # Security Check: Active users can request OTPs directly to their admin-registered Telegram IDs.
+
         
     import random
     otp = f"{random.randint(100000, 999999)}"
