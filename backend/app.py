@@ -160,6 +160,22 @@ def attendance():
 # =========================
 @app.route("/daily-minutes", methods=["GET"])
 def daily_minutes():
+    # Handle kiosk dates query parameter backward compatibility
+    dates_str = request.args.get("dates")
+    if dates_str:
+        try:
+            from sheets_service import compute_daily_minutes
+            dates = [d.strip() for d in dates_str.split(",") if d.strip()]
+            result = {}
+            for d in dates:
+                result[d] = compute_daily_minutes(d)
+            return jsonify(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
+    # Handle dashboard bulk heatmap data
     end_date = get_ist_now().strftime("%Y-%m-%d")
     start_date = (get_ist_now() - timedelta(days=365)).strftime("%Y-%m-%d")
     
