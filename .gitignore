@@ -16,8 +16,6 @@ frontend/.env.local
 .idea/
 .DS_Store
 
-# Dashboard Backend Secrets & Build Cache
-dashboard_backend/.env
-dashboard_backend/*.json
-!dashboard_backend/id_cache.json
-dashboard_backend/__pycache__/
+# Capacitor Android Builds
+frontend/android/
+

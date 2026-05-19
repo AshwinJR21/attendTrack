@@ -1,4 +1,14 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:5000';
+const getApiBaseUrl = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    return `http://${hostname}:5000`;
+  }
+  return 'http://127.0.0.1:5000';
+};
+const API_BASE_URL = getApiBaseUrl();
 
 export interface Session {
   start: number;
