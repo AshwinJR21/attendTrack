@@ -4,6 +4,10 @@ from datetime import datetime, timedelta, timezone
 import ssl
 import time
 import threading
+import bcrypt
+import base64
+import hashlib
+from cryptography.fernet import Fernet
 
 import os
 from dotenv import load_dotenv
@@ -65,6 +69,35 @@ SPREADSHEET_ID_CACHE = {} # year -> spreadsheet_id
 FOLDER_ID_CACHE = {"attendance": None}
 MASTER_ID_CACHE = {"id": None}
 
+ID_CACHE_FILE = "id_cache.json"
+
+def _load_id_cache():
+    global SPREADSHEET_ID_CACHE, FOLDER_ID_CACHE, MASTER_ID_CACHE
+    if os.path.exists(ID_CACHE_FILE):
+        try:
+            import json
+            with open(ID_CACHE_FILE, 'r') as f:
+                data = json.load(f)
+                # Convert spreadsheet year keys to integers
+                raw_spreadsheets = data.get("spreadsheets", {})
+                SPREADSHEET_ID_CACHE = {int(k): v for k, v in raw_spreadsheets.items()}
+                FOLDER_ID_CACHE = data.get("folders", {"attendance": None})
+                MASTER_ID_CACHE = data.get("master", {"id": None})
+        except: pass
+
+def _save_id_cache():
+    try:
+        import json
+        with open(ID_CACHE_FILE, 'w') as f:
+            json.dump({
+                "spreadsheets": SPREADSHEET_ID_CACHE,
+                "folders": FOLDER_ID_CACHE,
+                "master": MASTER_ID_CACHE
+            }, f)
+    except: pass
+
+_load_id_cache()
+
 EMPLOYEE_MASTER_SHEET = "employee_master"
 WFH_REQUESTS_SHEET = "wfh_requests"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
@@ -72,6 +105,38 @@ SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.jso
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 _admin_raw = os.getenv("ADMIN_CHAT_ID", "").strip()
 ADMIN_IDS = [x.strip() for x in _admin_raw.split(",") if x.strip()]
+
+# Auth Security Helpers
+def _get_fernet():
+    key = os.getenv("AUTH_MASTER_KEY")
+    if not key:
+        # Fallback to a derived key if not set (not ideal for prod, but prevents crash)
+        # In production, AUTH_MASTER_KEY must be set.
+        key = hashlib.sha256(b"attendance-tracker-system-salt").digest()
+    else:
+        key = hashlib.sha256(key.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+def get_allowed_telegram_ids():
+    encrypted = os.getenv("ALLOWED_TELEGRAM_IDS", "")
+    if not encrypted:
+        return []
+    try:
+        f = _get_fernet()
+        decrypted = f.decrypt(encrypted.encode()).decode()
+        return [x.strip() for x in decrypted.split(",") if x.strip()]
+    except Exception as e:
+        print(f"Auth decryption failed: {e}")
+        return []
+
+def set_allowed_telegram_ids(ids_list):
+    f = _get_fernet()
+    data = ",".join(ids_list)
+    encrypted = f.encrypt(data.encode()).decode()
+    # Note: This only sets it in the current process env. 
+    # manage_auth.py will handle writing to .env file.
+    os.environ["ALLOWED_TELEGRAM_IDS"] = encrypted
+    return encrypted
 
 creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build("sheets", "v4", credentials=creds)
@@ -130,7 +195,9 @@ def get_attendance_folder_id():
         }
         folder = retry_api(lambda: drive_service.files().create(body=folder_metadata, fields="id").execute())
         folder_id = folder.get("id")
-        FOLDER_ID_CACHE["attendance"] = folder_id
+        
+    FOLDER_ID_CACHE["attendance"] = folder_id
+    _save_id_cache()
     return folder_id
 
 
@@ -160,6 +227,7 @@ def get_master_spreadsheet_id():
     ensure_wfh_sheet_exists(master_id)
 
     MASTER_ID_CACHE["id"] = master_id
+    _save_id_cache()
     return master_id
 
 
@@ -239,6 +307,7 @@ def get_yearly_spreadsheet_id(year=None):
         spreadsheet_id = file.get("id")
 
     SPREADSHEET_ID_CACHE[year] = spreadsheet_id
+    _save_id_cache()
     return spreadsheet_id
 
 
@@ -465,15 +534,188 @@ def get_active_employees():
         record = dict(zip(headers, padded))
 
         status = record.get("status", "").strip().lower()
-        if status == "active":
+        if status in ["active", "invisible"]:
             employees.append({
                 "id": record.get("employee_id", record.get("id", "")),
                 "name": record.get("name", record.get("employee_name", "")),
                 "status": status,
+                "telegram_id": record.get("telegram_id", ""),
+                "phone": record.get("phone", record.get("phone_number", "")),
+                "role": record.get("role", "employee").lower(),
+                "pwd_hash": record.get("pwd", ""),
             })
 
-    _cache_set(cache_key, employees, 60)  # 60-second TTL
+    _cache_set(cache_key, employees, 10)  # 10-second TTL
     return employees
+
+def validate_credentials(identifier, password):
+    """
+    Validates user credentials. Identifier can be Name or ID.
+    Returns (True, user_data) or (False, error_msg)
+    """
+    employees = get_active_employees()
+    user = None
+    identifier_low = identifier.lower().strip()
+    
+    for emp in employees:
+        if emp['id'] == identifier or emp['name'].lower() == identifier_low:
+            user = emp
+            break
+            
+    if not user:
+        return False, "User not found"
+        
+    if user['role'] not in ['admin', 'manager']:
+        return False, "Access denied: Only Admins and Managers can log in"
+        
+    if not user['pwd_hash']:
+        return False, "Password not set. Please use 'Set Password' option."
+        
+    try:
+        if bcrypt.checkpw(password.encode(), user['pwd_hash'].encode()):
+            # Return user data without sensitive info
+            safe_user = {k: v for k, v in user.items() if k != 'pwd_hash'}
+            return True, safe_user
+    except Exception:
+        pass
+        
+    return False, "Invalid password"
+
+def generate_auth_otp(identifier):
+    """Generates and sends an OTP to the user's Telegram ID."""
+    employees = get_active_employees()
+    user = None
+    identifier_low = identifier.lower().strip()
+    
+    for emp in employees:
+        if emp['id'] == identifier or emp['name'].lower() == identifier_low:
+            user = emp
+            break
+            
+    if not user:
+        return False, "User not found"
+        
+    tg_id = str(user.get('telegram_id', '')).strip()
+    if not tg_id or tg_id == '-':
+        return False, "No Telegram ID found for this account"
+        
+    # Security Check: Is this Telegram ID allowed to request OTP?
+    allowed_ids = get_allowed_telegram_ids()
+    if tg_id not in allowed_ids:
+        return False, "Unauthorized: This Telegram ID is not on the allowed list for password changes"
+        
+    import random
+    otp = f"{random.randint(100000, 999999)}"
+    
+    # Cache OTP for 5 minutes
+    _cache_set(f"otp:{user['id']}", otp, 300)
+    
+    # Send via Telegram
+    try:
+        import requests
+        msg = f"🔐 *Workforce Auth*\n\nYour OTP for password reset is: `{otp}`\n\nThis code expires in 5 minutes."
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": tg_id,
+            "text": msg,
+            "parse_mode": "Markdown"
+        })
+        return True, {"id": user['id'], "telegram_id": tg_id}
+    except Exception as e:
+        return False, f"Failed to send Telegram message: {str(e)}"
+
+def verify_otp_only(user_id, otp):
+    """Checks if the OTP is valid without resetting password."""
+    cached_otp = _cache_get(f"otp:{user_id}")
+    if not cached_otp or cached_otp != otp:
+        return False, "Invalid or expired OTP"
+    return True, "OTP verified"
+
+def reset_user_password(user_id, otp, new_password):
+    """Verifies OTP and updates the password in the sheet."""
+    success, msg = verify_otp_only(user_id, otp)
+    if not success:
+        return False, msg
+        
+    # Hash new password
+    hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    
+    # Update spreadsheet
+    spreadsheet_id = get_master_spreadsheet_id()
+    
+    # Find row index for user
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{EMPLOYEE_MASTER_SHEET}'!A:Z"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    headers = [h.strip().lower() for h in rows[0]]
+    
+    try:
+        id_idx = headers.index("employee_id") if "employee_id" in headers else headers.index("id")
+        pwd_idx = headers.index("pwd")
+    except ValueError:
+        return False, "Required columns missing in master sheet"
+        
+    row_idx = -1
+    for i, row in enumerate(rows[1:], start=2):
+        if len(row) > id_idx and row[id_idx] == user_id:
+            row_idx = i
+            break
+            
+    if row_idx == -1:
+        return False, "User record not found in sheet"
+        
+    # Update the specific cell
+    # Column index to Letter
+    col_letter = chr(65 + pwd_idx)
+    range_name = f"'{EMPLOYEE_MASTER_SHEET}'!{col_letter}{row_idx}"
+    
+    retry_api(
+        lambda: service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            valueInputOption="RAW",
+            body={"values": [[hashed]]}
+        ).execute()
+    )
+    
+    # Invalidate employee cache
+    _cache_invalidate("active_employees")
+    return True, "Password updated successfully"
+
+def get_user_by_identifier(identifier):
+    """Finds a user by ID or Name (case-insensitive) in the master sheet."""
+    spreadsheet_id = get_master_spreadsheet_id()
+    result = retry_api(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{EMPLOYEE_MASTER_SHEET}'!A:Z"
+        ).execute()
+    )
+    rows = result.get("values", [])
+    if not rows: return None
+    
+    headers = [h.strip().lower() for h in rows[0]]
+    id_idx = headers.index("employee_id") if "employee_id" in headers else (headers.index("id") if "id" in headers else 0)
+    name_idx = headers.index("name") if "name" in headers else 1
+    tg_idx = headers.index("telegram_id") if "telegram_id" in headers else -1
+    role_idx = headers.index("role") if "role" in headers else -1
+    
+    ident_lower = str(identifier).strip().lower()
+    for row in rows[1:]:
+        if len(row) <= max(id_idx, name_idx): continue
+        if str(row[id_idx]).strip().lower() == ident_lower or \
+           str(row[name_idx]).strip().lower() == ident_lower:
+            return {
+                "id": row[id_idx],
+                "name": row[name_idx],
+                "telegram_id": row[tg_idx] if tg_idx != -1 and len(row) > tg_idx else None,
+                "role": row[role_idx] if role_idx != -1 and len(row) > role_idx else "user"
+            }
+    return None
 
 
 # =========================
@@ -763,8 +1005,8 @@ def check_duplicate_wfh(tg_id, start_date):
                 return True, status
     return False, None
 
-def get_pending_wfh_requests():
-    """Fetches all WFH requests with 'pending' status."""
+def get_pending_wfh_requests(status_filter="pending"):
+    """Fetches all WFH requests with a specific status (defaults to pending)."""
     spreadsheet_id = get_master_spreadsheet_id()
     ensure_wfh_sheet_exists(spreadsheet_id)
     
@@ -775,7 +1017,8 @@ def get_pending_wfh_requests():
     # Headers: [tg_id, from, to, emp_id, name, status]
     for row in rows[1:]:
         if len(row) < 6: continue
-        if row[5].lower() == "pending":
+        current_status = row[5].lower()
+        if status_filter == "all" or current_status == status_filter.lower():
             pending.append({
                 "tg_id": row[0],
                 "from": row[1],
@@ -1065,3 +1308,304 @@ def get_earliest_record_date():
             pass
 
     return f"{earliest_year}-01-01"
+# =========================
+# 8. GET SESSIONS BULK
+#    Returns {emp_id: [session, ...]} for a given "YYYY-MM-DD".
+#    session: {"start": mins_from_midnight, "end": mins_from_midnight | None, "type": "green"|"red"}
+# =========================
+def get_sessions_bulk(date_str):
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return {}
+
+    month_sheet = target.strftime("%B_Activity_Log")
+    year = target.year
+    spreadsheet_id = get_yearly_spreadsheet_id(year)
+
+    try:
+        # Use get_rows which handles caching
+        rows = get_rows(month_sheet, year)
+    except Exception:
+        return {}
+
+    # Filter rows for the target date
+    day_rows = [r for r in rows if len(r) >= 4 and r[2].startswith(date_str)]
+
+    emp_rows = {}
+    for r in day_rows:
+        emp_rows.setdefault(str(r[0]), []).append(r)
+
+    sessions_map = {}
+    
+    # Get all active employees to ensure everyone has at least an initial state
+    active_employees = get_active_employees()
+    status_map = get_all_statuses_bulk(month_sheet, year)
+    today_str = get_ist_now().strftime("%Y-%m-%d")
+
+    for emp in active_employees:
+        emp_id = str(emp["id"])
+        rlist = emp_rows.get(emp_id, [])
+        sessions = []
+        rlist.sort(key=lambda x: x[2])
+        
+        last_ts_mins = None
+        last_type = None
+
+        if not rlist:
+            # No punches today. Use status from master/status_map
+            info = status_map.get(emp_id, {"status": "OUT"})
+            # If they are IN from yesterday, they are NOT late (they were already there)
+            # and they count as IN from 8 AM (since INs before 8 AM are not considered)
+            last_ts_mins = 480 # 8 AM
+            last_type = "green" if info["status"] == "IN" else "red"
+        else:
+            # Has punches today.
+            # Clip everything before 8 AM? The user said "INs marked before 8 am will not be considered"
+            # We'll start the day at 8 AM (480 mins).
+            
+            # Find the status at 8 AM.
+            # If the first punch is after 8 AM, the status at 8 AM is the "pre-first-punch" status.
+            first_punch_mins = None
+            try:
+                ts = datetime.strptime(rlist[0][2], "%Y-%m-%d %H:%M:%S")
+                first_punch_mins = ts.hour * 60 + ts.minute + ts.second / 60.0
+            except: pass
+
+            if first_punch_mins is not None and first_punch_mins > 480:
+                first_tag = rlist[0][3].upper()
+                prev_type = "red" if first_tag == "IN" else "green"
+                sessions.append({"start": 480, "end": first_punch_mins, "type": prev_type})
+                last_ts_mins = first_punch_mins
+                last_type = "green" if first_tag == "IN" else "red"
+            else:
+                # First punch is before or at 8 AM.
+                # If it's an IN before 8 AM, it's "not considered", so we treat them as OUT at 8 AM
+                # unless they have another punch later.
+                # Wait, "not considered" is tricky. Let's assume it means they are red until 8 AM.
+                last_ts_mins = 480
+                # What is their status at 8 AM? 
+                # We can iterate punches and find the one active at 8 AM.
+                active_tag_at_8 = "OUT"
+                for row in rlist:
+                    try:
+                        ts = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
+                        m = ts.hour * 60 + ts.minute + ts.second / 60.0
+                        if m <= 480:
+                            active_tag_at_8 = row[3].upper()
+                        else:
+                            break
+                    except: continue
+                
+                # If active_tag_at_8 is IN, but it was marked before 8 AM, user says "not considered".
+                # This likely means they are treated as if they haven't checked in yet.
+                # So we'll force OUT at 8 AM if the IN was before 8 AM.
+                last_type = "red" 
+                # Unless they have punches after 8 AM, the loop below will handle it.
+
+            for row in rlist:
+                try:
+                    ts = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
+                    mins = ts.hour * 60 + ts.minute + ts.second / 60.0
+                except: continue
+                
+                if mins < 480: continue # Skip punches before 8 AM (already handled)
+
+                tag = row[3].upper()
+                if last_ts_mins is None:
+                    last_ts_mins = mins
+                    last_type = "green" if tag == "IN" else "red"
+                else:
+                    sessions.append({"start": last_ts_mins, "end": mins, "type": last_type})
+                    last_ts_mins = mins
+                    last_type = "green" if tag == "IN" else "red"
+
+        # Handle the open session at the end
+        if last_ts_mins is not None:
+            if date_str == today_str:
+                sessions.append({"start": last_ts_mins, "end": None, "type": last_type})
+            else:
+                sessions.append({"start": last_ts_mins, "end": 23 * 60 + 59 + 59/60.0, "type": last_type})
+
+        sessions_map[emp_id] = sessions
+
+    return sessions_map
+
+
+def get_range_stats_bulk(start_date_str, end_date_str):
+    """
+    Returns aggregated stats for each employee over a date range.
+    { emp_id: { "work_mins": total, "break_mins": total, "in_sessions": total, "out_sessions": total, "office_days": count, "wfh_days": count } }
+    """
+    from datetime import datetime, timedelta
+    
+    start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date_str, "%Y-%m-%d")
+    
+    # Get all logs
+    rows = get_rows() # This is cached for 10s
+    
+    # Process all days in range
+    stats_map = {} # emp_id -> { stats }
+    
+    # Helper to check clipping
+    window_start = 10 * 60
+    window_end = 19 * 60
+    
+    # Pre-filter rows by date range for efficiency
+    filtered_rows = []
+    for row in rows:
+        if len(row) < 3: continue
+        try:
+            dt_str = row[2].split(' ')[0]
+            if start_date_str <= dt_str <= end_date_str:
+                filtered_rows.append(row)
+        except: continue
+        
+    # Group by employee and day
+    emp_day_data = {} # (emp_id, date_str) -> [rows]
+    for row in filtered_rows:
+        emp_id = str(row[0])
+        dt_str = row[2].split(' ')[0]
+        key = (emp_id, dt_str)
+        if key not in emp_day_data: emp_day_data[key] = []
+        emp_day_data[key].append(row)
+        
+    for (emp_id, dt_str) in emp_day_data:
+        if emp_id not in stats_map:
+            stats_map[emp_id] = {
+                "work_mins": 0,
+                "break_mins": 0,
+                "in_sessions": 0,
+                "out_sessions": 0,
+                "office_days": 0,
+                "wfh_days": 0
+            }
+        
+        # Calculate for this specific day
+        rlist = emp_day_data[(emp_id, dt_str)]
+        # Sort by timestamp
+        rlist.sort(key=lambda x: x[2])
+        
+        day_sessions = []
+        last_ts = None
+        last_type = None
+        last_loc = None
+        
+        # We need to know if they were IN or OUT at the start of the day (8 AM)
+        # For simplicity, if first punch is after 8 AM, we assume they were OUT before it.
+        # This matches get_sessions_bulk logic.
+        
+        for row in rlist:
+            try:
+                ts = datetime.strptime(row[2], "%Y-%m-%d %H:%M:%S")
+                mins = ts.hour * 60 + ts.minute + ts.second / 60.0
+                if mins < 480: continue # Skip before 8 AM
+                
+                tag = row[3].upper()
+                loc = row[4] if len(row) > 4 else "Office"
+                
+                if last_ts is None:
+                    last_ts = mins
+                    last_type = "green" if tag == "IN" else "red"
+                    last_loc = loc
+                else:
+                    day_sessions.append({"start": last_ts, "end": mins, "type": last_type, "loc": last_loc})
+                    last_ts = mins
+                    last_type = "green" if tag == "IN" else "red"
+                    last_loc = loc
+            except: continue
+            
+        # Closing session for past days (23:59)
+        if last_ts is not None:
+            day_sessions.append({"start": last_ts, "end": 1439.9, "type": last_type, "loc": last_loc})
+            
+        # Aggregate day stats
+        day_work = 0
+        day_break = 0
+        office_mins = 0
+        home_mins = 0
+        
+        for s in day_sessions:
+            dur = s["end"] - s["start"]
+            if s["type"] == "green":
+                day_work += dur
+                stats_map[emp_id]["in_sessions"] += 1
+                if s["loc"] == "Home": home_mins += dur
+                else: office_mins += dur
+            else:
+                stats_map[emp_id]["out_sessions"] += 1
+                # Clipping break
+                os = max(s["start"], window_start)
+                oe = min(s["end"], window_end)
+                if oe > os:
+                    day_break += (oe - os)
+                    
+        stats_map[emp_id]["work_mins"] += day_work
+        stats_map[emp_id]["break_mins"] += day_break
+        
+        if day_work > 0:
+            if home_mins > office_mins:
+                stats_map[emp_id]["wfh_days"] += 1
+            else:
+                stats_map[emp_id]["office_days"] += 1
+                
+    return stats_map
+
+def get_heatmap_data_bulk(start_date_str, end_date_str):
+    """
+    Returns {emp_id: {date_str: hours}} for all employees in range.
+    """
+    # For now, we use get_rows() which is current month.
+    # To truly support 365 days, we'd need to iterate through months.
+    rows = get_rows()
+    if not rows: return {}
+    
+    start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date_str, "%Y-%m-%d")
+    
+    heatmap = {}
+    employees = get_active_employees()
+    for emp in employees:
+        heatmap[emp['id']] = {}
+        
+    # Group logs by emp and date
+    # Row format: [emp_id, name, timestamp, IN/OUT, location]
+    # timestamp is "YYYY-MM-DD HH:MM:SS"
+    grouped = {}
+    for row in rows:
+        if len(row) < 4: continue
+        eid = str(row[0])
+        ts_str = row[2]
+        act = row[3].upper()
+        
+        try:
+            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            d_str = dt.strftime("%Y-%m-%d")
+            if not (start_dt <= dt <= end_dt): continue
+        except: continue
+        
+        if eid not in grouped: grouped[eid] = {}
+        if d_str not in grouped[eid]: grouped[eid][d_str] = []
+        
+        # Calculate minutes from start of day
+        curr_mins = dt.hour * 60 + dt.minute
+        grouped[eid][d_str].append((curr_mins, act))
+        
+    for eid, days in grouped.items():
+        if eid not in heatmap: heatmap[eid] = {}
+        for d, day_logs in days.items():
+            day_logs.sort(key=lambda x: x[0])
+            
+            total_mins = 0
+            last_in = None
+            for curr_mins, act in day_logs:
+                if act == 'IN':
+                    last_in = curr_mins
+                elif act == 'OUT' and last_in is not None:
+                    total_mins += (curr_mins - last_in)
+                    last_in = None
+            
+            heatmap[eid][d] = round(total_mins / 60.0, 2)
+            
+    return heatmap

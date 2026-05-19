@@ -97,6 +97,24 @@ Tailscale is used to securely expose your local backend to the internet (optiona
 
 ---
 
+## 4b. Dashboard Setup
+
+The Next.js interactive workforce analytics dashboard allows real-time status and timeline monitoring across your LAN.
+
+1.  **Navigate to Dashboard**:
+    ```bash
+    cd ../dashboard
+    ```
+2.  **Install Dependencies**:
+    ```bash
+    bun install  # Or 'npm install'
+    ```
+3.  **LAN Environment Config**:
+    No environment variables are required by default! The dashboard uses advanced dynamic hostname extraction to automatically resolve your laptop's API base URL when loaded in other office browsers.
+    *Note: If you ever want to override it to a specific URL, you can create a `.env.local` file inside `dashboard/` and specify `NEXT_PUBLIC_API_URL=http://<TARGET_IP>:5000`.*
+
+---
+
 ## 5. Packaging the Android APK
 Since the project uses **Capacitor**, you can generate an Android APK yourself.
 
@@ -150,6 +168,35 @@ cd frontend
 bun dev
 ```
 Update your `frontend/.env` with the URL from Step 2 if you want to test the mobile/remote flow.
+
+### Step 5: Start the Dashboard (For LAN access)
+```bash
+cd dashboard
+bun run dev -- --hostname 0.0.0.0 --port 3000
+```
+This runs the dashboard on your LAN at `http://<LAPTOP_LAN_IP>:3000` with automatic dynamic resolution of the backend.
+
+### Running Headless Background Services (Systemd Kiosk Mode)
+If you want to run the application 24/7 on an Ubuntu laptop in the background (where the laptop screen only displays the punch-in/out frontend, and the dashboard/backend run in the background):
+
+1.  **Register the background systemd services**:
+    Copy all `.service` files to the system folder:
+    ```bash
+    sudo cp service_files/*.service /etc/systemd/system/
+    ```
+2.  **Enable and Start Services**:
+    Reload the systemd manager, enable them to launch automatically on system boot, and start them:
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable atbe atfe atdb
+    sudo systemctl start atbe atfe atdb
+    ```
+3.  **Check Service Statuses**:
+    Verify that all services are fully active:
+    ```bash
+    sudo systemctl status atbe atfe atdb
+    ```
+    *Now the backend, frontend kiosk, and LAN dashboard are running 24/7 in the background!*
 
 ---
 

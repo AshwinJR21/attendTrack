@@ -16,5 +16,6 @@ frontend/.env.local
 .idea/
 .DS_Store
 
-# Apps
-dashboard/
+# Capacitor Android Builds
+frontend/android/
+
