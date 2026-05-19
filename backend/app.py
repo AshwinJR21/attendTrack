@@ -37,6 +37,23 @@ app = Flask(__name__)
 CORS(app)
 
 
+def verify_role_authorized(requester_id, allowed_roles=["admin", "manager"]):
+    """Helper to verify if a requester has administrative clearance."""
+    if not requester_id:
+        return False, "Requester ID is required for authentication"
+        
+    from sheets_service import get_user_by_identifier
+    user = get_user_by_identifier(requester_id)
+    if not user:
+        return False, f"Requester '{requester_id}' not found in employee records"
+        
+    if user.get("role") not in allowed_roles:
+        return False, f"Access denied: Role '{user.get('role')}' is unauthorized"
+        
+    return True, user
+
+
+
 
 
 # =========================
@@ -376,6 +393,12 @@ def reset_password():
 @app.route("/api/requests", methods=["GET"])
 def get_requests():
     status = request.args.get("status", "pending")
+    requester_id = request.args.get("requester_id", "").strip()
+    
+    is_authorized, auth_msg = verify_role_authorized(requester_id, allowed_roles=["admin", "manager"])
+    if not is_authorized:
+        return jsonify({"error": auth_msg}), 403
+        
     try:
         requests = get_pending_wfh_requests(status_filter=status)
         return jsonify({"requests": requests})
@@ -384,10 +407,15 @@ def get_requests():
 
 @app.route("/api/requests/action", methods=["POST"])
 def handle_request_action():
-    data = request.get_json()
+    data = request.get_json() or {}
     action = data.get("action") # "approve", "reject", "approve_all", "reject_all"
     request_data = data.get("request") # The specific request object for single actions
+    requester_id = data.get("requester_id", "").strip()
     
+    is_authorized, auth_msg = verify_role_authorized(requester_id, allowed_roles=["admin"])
+    if not is_authorized:
+        return jsonify({"error": auth_msg}), 403
+        
     try:
         if action in ["approve", "reject", "pending"]:
             if not request_data:

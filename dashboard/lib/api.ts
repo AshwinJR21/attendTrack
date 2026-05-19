@@ -165,7 +165,11 @@ export async function verifyOtp(userId: string, otp: string): Promise<any> {
 }
 
 export async function fetchRequests(status: string = 'pending'): Promise<any[]> {
-  const response = await fetch(`${API_BASE_URL}/api/requests?status=${status}`);
+  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const user = stored ? JSON.parse(stored) : null;
+  const requesterId = user ? user.id : '';
+
+  const response = await fetch(`${API_BASE_URL}/api/requests?status=${status}&requester_id=${encodeURIComponent(requesterId)}`);
   if (!response.ok) {
     throw new Error('Failed to fetch requests');
   }
@@ -174,10 +178,14 @@ export async function fetchRequests(status: string = 'pending'): Promise<any[]> 
 }
 
 export async function updateRequestStatus(action: string, requestData?: any): Promise<any> {
+  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const user = stored ? JSON.parse(stored) : null;
+  const requesterId = user ? user.id : '';
+
   const response = await fetch(`${API_BASE_URL}/api/requests/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, request: requestData }),
+    body: JSON.stringify({ action, request: requestData, requester_id: requesterId }),
   });
   if (!response.ok) {
     const errorData = await response.json();
