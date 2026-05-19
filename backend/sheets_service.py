@@ -565,8 +565,8 @@ def validate_credentials(identifier, password):
     if not user:
         return False, "User not found"
         
-    if user['role'] not in ['admin', 'manager']:
-        return False, "Access denied: Only Admins and Managers can log in"
+    if user['role'] not in ['admin', 'manager', 'employee']:
+        return False, "Access denied: Invalid account role"
         
     if not user['pwd_hash']:
         return False, "Password not set. Please use 'Set Password' option."

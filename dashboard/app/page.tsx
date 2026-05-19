@@ -33,7 +33,7 @@ export default function Page() {
     if (stored) {
       try {
         const user = JSON.parse(stored);
-        if (user && (user.role === 'admin' || user.role === 'manager')) {
+        if (user && (user.role === 'admin' || user.role === 'manager' || user.role === 'employee')) {
           setIsLoggedIn(true);
           setCurrentUser(user);
         }

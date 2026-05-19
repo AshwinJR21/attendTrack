@@ -305,7 +305,7 @@ def check_role():
         "id": user['id'],
         "name": user['name'],
         "role": user['role'],
-        "login_allowed": user['role'] in ['admin', 'manager']
+        "login_allowed": user['role'] in ['admin', 'manager', 'employee']
     })
 
 @app.route("/api/auth/login", methods=["POST"])
