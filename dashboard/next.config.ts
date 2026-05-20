@@ -13,7 +13,7 @@ const getLocalIPs = () => {
   }
   return Array.from(new Set(ips));
 };
-
+  
 const nextConfig: NextConfig = {
   allowedDevOrigins: getLocalIPs(),
   async headers() {

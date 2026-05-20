@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 from datetime import datetime, timedelta
@@ -39,6 +40,7 @@ app.config['SECRET_KEY'] = 'secure-workforce-session-secret-key-1029'
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 # Configure CORS with supports_credentials=True and specific origins
+# Added a dynamic regex match for local IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x) and Tailscale (100.x.y.z)
 CORS(
     app, 
     supports_credentials=True, 
@@ -48,11 +50,13 @@ CORS(
                 "http://localhost:3000", 
                 "http://127.0.0.1:3000",
                 "http://localhost:5173",
-                "http://127.0.0.1:5173"
+                "http://127.0.0.1:5173",
+                re.compile(r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|100\.\d+\.\d+\.\d+)(:\d+)?$")
             ]
         }
     }
 )
+
 
 
 
