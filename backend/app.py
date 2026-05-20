@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+from itsdangerous import URLSafeTimedSerializer
 import queue
 from event_bus import clients, notify_clients
 
@@ -34,11 +35,39 @@ from sheets_service import (
 from telegram_bot import handle_webhook
 
 app = Flask(__name__)
-CORS(app)
+app.config['SECRET_KEY'] = 'secure-workforce-session-secret-key-1029'
+serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
+
+# Configure CORS with supports_credentials=True and specific origins
+CORS(
+    app, 
+    supports_credentials=True, 
+    resources={
+        r"/*": {
+            "origins": [
+                "http://localhost:3000", 
+                "http://127.0.0.1:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:5173"
+            ]
+        }
+    }
+)
+
 
 
 def verify_role_authorized(requester_id, allowed_roles=["admin", "manager"]):
     """Helper to verify if a requester has administrative clearance."""
+    # Attempt cookie-based timed session verification first
+    token = request.cookies.get('auth_token')
+    if token:
+        try:
+            # Enforce 10-minute session absolute timeout (600 seconds)
+            payload = serializer.loads(token, max_age=600)
+            requester_id = payload.get("id")
+        except Exception:
+            return False, "Session expired or invalid. Please login again."
+            
     if not requester_id:
         return False, "Requester ID is required for authentication"
         
@@ -51,6 +80,7 @@ def verify_role_authorized(requester_id, allowed_roles=["admin", "manager"]):
         return False, f"Access denied: Role '{user.get('role')}' is unauthorized"
         
     return True, user
+
 
 
 
@@ -352,9 +382,37 @@ def login():
         
     success, result = validate_credentials(identifier, password)
     if success:
-        return jsonify({"success": True, "user": result})
+        # Generate cryptographically signed token containing user ID, role, and current timestamp
+        token = serializer.dumps({
+            "id": result["id"],
+            "role": result["role"],
+            "login_time": time.time()
+        })
+        
+        response = jsonify({"success": True, "user": result})
+        # Set HttpOnly, Secure, SameSite=Strict session cookie (no max_age/expires means session cookie)
+        response.set_cookie(
+            'auth_token',
+            token,
+            httponly=True,
+            secure=True,
+            samesite='Strict'
+        )
+        return response
     else:
         return jsonify({"error": result}), 401
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    response = jsonify({"success": True, "message": "Logged out successfully"})
+    response.delete_cookie(
+        'auth_token',
+        httponly=True,
+        secure=True,
+        samesite='Strict'
+    )
+    return response
+
 
 @app.route("/api/auth/request-otp", methods=["POST"])
 def request_otp():

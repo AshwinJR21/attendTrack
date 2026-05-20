@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Sun, Moon, Target, Calendar, Search, X, LogOut, Power } from 'lucide-react';
+import { Sun, Moon, Target, Calendar, Search, X, LogOut, Power, ChevronLeft, ChevronRight } from 'lucide-react';
 import { fetchEmployees, fetchSessions, subscribeToUpdates, fetchRangeStats, fetchDailyMinutes, postAttendance } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -61,9 +61,10 @@ export default function ProgressTracker() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [activeDurationTab, setActiveDurationTab] = useState<DurationTab>('day');
+  const [focusedDate, setFocusedDate] = useState<string>(() => { const _d = new Date(); return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`; });
   const [isMounted, setIsMounted] = useState(false);
   const [heatmapMode, setHeatmapMode] = useState<'current' | 'rolling'>('current');
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = (() => { const _d = new Date(); return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`; })();
   const [customStartDate, setCustomStartDate] = useState(todayStr);
   const [customEndDate, setCustomEndDate] = useState(todayStr);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -97,6 +98,7 @@ export default function ProgressTracker() {
     custom: { durationWorkedStr: '0h 0m', durationBreakStr: '0h 0m', inSessions: 0, outSessions: 0, officeDays: 0, wfhDays: 0 },
   });
   const [focusedHeatmap, setFocusedHeatmap] = useState<Record<string, number>>({});
+  const [focusedDateStats, setFocusedDateStats] = useState<StatPeriod | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export default function ProgressTracker() {
   const loadLiveData = async () => {
     try {
       const employees = await fetchEmployees();
-      const todayDateStr = new Date().toISOString().split('T')[0];
+      const todayDateStr = (() => { const _d = new Date(); return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`; })();
       const sessionsMap = await fetchSessions(todayDateStr);
       
       const mergedPeople: Person[] = employees.map(emp => {
@@ -171,7 +173,7 @@ export default function ProgressTracker() {
       setLoadingStats(true);
       try {
         const today = new Date();
-        const getLocalDateStr = (d: Date) => d.toISOString().split('T')[0];
+        const getLocalDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
         // 1. Fetch Heatmap
         const heatmapResult = await fetchDailyMinutes();
@@ -241,6 +243,33 @@ export default function ProgressTracker() {
 
     loadFocusedData();
   }, [selectedPersonId, customStartDate, customEndDate]);
+
+  // Fetch real stats (including break time) for a specific past day
+  useEffect(() => {
+    const todayStr = (() => { const _d = new Date(); return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`; })();
+    if (selectedPersonId === null || focusedDate === todayStr) {
+      setFocusedDateStats(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchDayStats = async () => {
+      try {
+        const statsMap = await fetchRangeStats(focusedDate, focusedDate);
+        if (cancelled) return;
+        const u = statsMap[selectedPersonId] || { work_mins: 0, break_mins: 0, in_sessions: 0, out_sessions: 0, office_days: 0, wfh_days: 0 };
+        setFocusedDateStats({
+          durationWorkedStr: `${Math.floor(u.work_mins / 60)}h ${Math.floor(u.work_mins % 60)}m`,
+          durationBreakStr:  `${Math.floor(u.break_mins / 60)}h ${Math.floor(u.break_mins % 60)}m`,
+          inSessions:  u.in_sessions,
+          outSessions: u.out_sessions,
+        });
+      } catch (e) {
+        console.error('Failed to fetch day stats:', e);
+      }
+    };
+    fetchDayStats();
+    return () => { cancelled = true; };
+  }, [selectedPersonId, focusedDate]);
 
   // Update clock
   useEffect(() => {
@@ -771,28 +800,85 @@ export default function ProgressTracker() {
   }, [isMounted]);
 
   useEffect(() => {
-    const header = headerInteractionRef.current;
     const container = scrollContainerRef.current;
-    if (!header || !container) return;
+    if (!container) return;
 
+    // 1. Mouse Wheel Zoom (anywhere in timeline) and trackpad pan
     const handleWheel = (e: WheelEvent) => {
+      // If primarily horizontal scroll (trackpad), pan instead of zoom
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         container.scrollLeft += e.deltaX;
         setIsManualZoom(true);
-      } else {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.95 : 1.05;
-        setZoomScale(prev => {
-          const next = Math.min(Math.max(prev * delta, 1), 15);
-          if (next !== prev) setIsManualZoom(true);
-          return next;
-        });
+        return;
       }
+
+      // Zoom centered on cursor position
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const contentX = mouseX + container.scrollLeft;
+
+      // Vertical scroll wheel triggers zoom
+      const delta = e.deltaY > 0 ? 0.92 : 1.08;
+
+      setZoomScale(prev => {
+        const next = Math.min(Math.max(prev * delta, 1), 15);
+        if (next !== prev) {
+          setIsManualZoom(true);
+          const ratio = next / prev;
+          const newScrollLeft = contentX * ratio - mouseX;
+
+          requestAnimationFrame(() => {
+            if (scrollContainerRef.current) {
+              scrollContainerRef.current.scrollLeft = newScrollLeft;
+            }
+          });
+        }
+        return next;
+      });
     };
 
+    // 2. Mouse Drag Scroll (LMB Drag Horizontal) - Resilient window listeners
+    let isMouseDown = false;
+    let startX = 0;
+    let scrollLeftStart = 0;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return; // Left Mouse Button only
+      isMouseDown = true;
+      startX = e.clientX;
+      scrollLeftStart = container.scrollLeft;
+      container.style.cursor = 'grabbing';
+      document.body.style.cursor = 'grabbing';
+      document.body.style.userSelect = 'none';
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isMouseDown) return;
+      const dx = e.clientX - startX;
+      container.scrollLeft = scrollLeftStart - dx * 1.5; // pan multiplier for smooth drag
+      setIsManualZoom(true);
+    };
+
+    const handleMouseUpOrLeave = () => {
+      if (!isMouseDown) return;
+      isMouseDown = false;
+      container.style.cursor = 'grab';
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+
+    const handleDragStart = (e: DragEvent) => {
+      e.preventDefault();
+    };
+
+    // 3. Touch screen support (pinch zoom & swipe pan)
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        touchStartDistRef.current = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+        touchStartDistRef.current = Math.hypot(
+          e.touches[0].pageX - e.touches[1].pageX,
+          e.touches[0].pageY - e.touches[1].pageY
+        );
       } else if (e.touches.length === 1) {
         touchStartPosRef.current = { x: e.touches[0].pageX, scrollLeft: container.scrollLeft };
       }
@@ -801,7 +887,10 @@ export default function ProgressTracker() {
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length === 2 && touchStartDistRef.current !== null) {
         e.preventDefault();
-        const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+        const dist = Math.hypot(
+          e.touches[0].pageX - e.touches[1].pageX,
+          e.touches[0].pageY - e.touches[1].pageY
+        );
         const delta = dist / touchStartDistRef.current;
         touchStartDistRef.current = dist;
         setZoomScale(prev => {
@@ -821,16 +910,31 @@ export default function ProgressTracker() {
       touchStartPosRef.current = null;
     };
 
-    header.addEventListener('wheel', handleWheel, { passive: false });
-    header.addEventListener('touchstart', handleTouchStart);
-    header.addEventListener('touchmove', handleTouchMove, { passive: false });
-    header.addEventListener('touchend', handleTouchEnd);
+    // Attach listeners
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('mousedown', handleMouseDown);
+    container.addEventListener('dragstart', handleDragStart);
+    
+    // Listen on window globally to prevent drag drops and sticky mouse behavior
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUpOrLeave);
 
+    container.addEventListener('touchstart', handleTouchStart);
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd);
+
+    // Clean up
     return () => {
-      header.removeEventListener('wheel', handleWheel);
-      header.removeEventListener('touchstart', handleTouchStart);
-      header.removeEventListener('touchmove', handleTouchMove);
-      header.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('dragstart', handleDragStart);
+      
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUpOrLeave);
+
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
     };
   }, []);
 
@@ -885,22 +989,24 @@ export default function ProgressTracker() {
         </div>
 
         {/* Centered Stats Display */}
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-10 z-10">
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Total Fleet</span>
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-8 z-10">
+          <div className="flex flex-col items-center min-w-[110px]">
+            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Active employees</span>
             <span className="text-2xl font-black text-white">{people.length}</span>
           </div>
           <div className="w-px h-8 bg-white/5"></div>
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-emerald-500/50 uppercase tracking-widest mb-1">Active IN</span>
+          <div className="flex flex-col items-center min-w-[50px]">
+            <span className="text-[10px] font-black text-emerald-500/50 uppercase tracking-widest mb-1">IN</span>
             <span className="text-2xl font-black text-emerald-500">{people.filter(p => p.sessions[p.sessions.length-1].type === 'green').length}</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-rose-500/50 uppercase tracking-widest mb-1">Active OUT</span>
+          <div className="w-px h-8 bg-white/5"></div>
+          <div className="flex flex-col items-center min-w-[50px]">
+            <span className="text-[10px] font-black text-rose-500/50 uppercase tracking-widest mb-1">OUT</span>
             <span className="text-2xl font-black text-rose-500">{people.filter(p => p.sessions[p.sessions.length-1].type === 'red').length}</span>
           </div>
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-amber-500/50 uppercase tracking-widest mb-1">Tactical Late</span>
+          <div className="w-px h-8 bg-white/5"></div>
+          <div className="flex flex-col items-center min-w-[50px]">
+            <span className="text-[10px] font-black text-amber-500/50 uppercase tracking-widest mb-1">LATE</span>
             <span className="text-2xl font-black text-amber-500">{people.length > 0 ? lateCount : '-'}</span>
           </div>
         </div>
@@ -930,7 +1036,7 @@ export default function ProgressTracker() {
                   <Search className="absolute left-2 text-zinc-600" size={14} />
                   <input
                     type="text"
-                    placeholder="Search fleet..."
+                    placeholder="Search employees..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full bg-zinc-900/50 border border-zinc-800/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/30 transition-colors"
@@ -970,9 +1076,15 @@ export default function ProgressTracker() {
 
             {/* Chart Area */}
             <div className="flex-1 relative overflow-hidden flex flex-col">
+              {isBuffering && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#020202]/45 backdrop-blur-sm transition-all duration-500">
+                  <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin shadow-[0_0_20px_rgba(16,185,129,0.2)]"></div>
+                </div>
+              )}
               <div 
                 ref={scrollContainerRef}
                 className="flex-1 overflow-x-auto overflow-y-hidden relative select-none scrollbar-hide"
+                style={{ cursor: 'grab' }}
               >
                 <div 
                   style={{ width: `${100 * zoomScale}%`, minWidth: '100%' }}
@@ -981,7 +1093,7 @@ export default function ProgressTracker() {
                   {/* Sticky Header */}
                   <div 
                     ref={headerInteractionRef}
-                    className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-800/50 cursor-ew-resize h-12 flex flex-col justify-end pb-2 flex-shrink-0"
+                    className="sticky top-0 z-40 bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-800/50 cursor-grab h-12 flex flex-col justify-end pb-2 flex-shrink-0"
                   >
                     <div className="w-full flex justify-between px-12 relative items-end h-full">
                       {timeMarkers.map((m, idx) => (
@@ -1005,14 +1117,6 @@ export default function ProgressTracker() {
 
                   {/* Rows Container */}
                   <div className="relative flex-1 flex flex-col overflow-hidden">
-                    {isBuffering && (
-                      <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm transition-all duration-500">
-                        <div className="flex flex-col items-center">
-                          <div className="w-16 h-16 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4 shadow-[0_0_20px_rgba(16,185,129,0.2)]"></div>
-                          <span className="text-xs font-black text-emerald-500 uppercase tracking-[0.3em] animate-pulse">Tactical Scan Active</span>
-                        </div>
-                      </div>
-                    )}
                     <div 
                       className={`px-12 flex flex-col transition-all duration-700 ${isBuffering ? 'opacity-5 grayscale scale-[0.98] blur-sm' : 'opacity-100 grayscale-0 scale-100 blur-0'} ${!searchQuery && filteredPeople.length > 1 ? 'h-full' : ''}`}
                     >
@@ -1096,10 +1200,23 @@ export default function ProgressTracker() {
                       {(() => {
                         const person = filteredPeople[0];
                         let stats: StatPeriod;
-                        const todayStr = new Date().toISOString().split('T')[0];
+                        const todayStr = (() => { const _d = new Date(); return `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`; })();
 
                         if (activeDurationTab === 'day') {
-                          stats = getDailyStats(person);
+                          if (focusedDate === todayStr) {
+                            stats = getDailyStats(person);
+                          } else {
+                            // Use real fetched stats for past days (includes break time)
+                            if (focusedDateStats) {
+                              stats = focusedDateStats;
+                            } else {
+                              // Fallback to heatmap hours while fetching
+                              const pastHours = focusedHeatmap[focusedDate] || 0;
+                              const wH = Math.floor(pastHours);
+                              const wM = Math.floor((pastHours % 1) * 60);
+                              stats = { durationWorkedStr: `${wH}h ${wM}m`, durationBreakStr: '—', inSessions: pastHours > 0 ? 1 : 0, outSessions: pastHours > 0 ? 1 : 0 };
+                            }
+                          }
                         } else if (activeDurationTab === 'custom') {
                           if (customStartDate === customEndDate) {
                             if (customStartDate === todayStr) {
@@ -1173,6 +1290,77 @@ export default function ProgressTracker() {
                                 ))}
                               </div>
 
+
+                               {/* Scrollable Day Picker — only visible under Day tab */}
+                               {activeDurationTab === 'day' && (() => {
+                                 const today = new Date();
+                                 today.setHours(0, 0, 0, 0);
+                                 const todayDateStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+                                 const days: string[] = [];
+                                 for (let i = 14; i >= 0; i--) {
+                                   const d = new Date(today);
+                                   d.setDate(today.getDate() - i);
+                                   days.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+                                 }
+                                 const focusedIdx = days.indexOf(focusedDate);
+                                 const clampedIdx = focusedIdx === -1 ? days.length - 1 : focusedIdx;
+
+                                 const goLeft = () => setFocusedDate(prev => {
+                                   const idx = days.indexOf(prev);
+                                   const i = idx === -1 ? days.length - 1 : idx;
+                                   return i > 0 ? days[i - 1] : prev;
+                                 });
+                                 const goRight = () => setFocusedDate(prev => {
+                                   const idx = days.indexOf(prev);
+                                   const i = idx === -1 ? days.length - 1 : idx;
+                                   return i < days.length - 1 ? days[i + 1] : prev;
+                                 });
+
+                                 const fmtLabel = (dateStr: string) => {
+                                   if (dateStr === todayDateStr) return 'Today';
+                                   const d = new Date(dateStr + 'T00:00:00');
+                                   return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                                 };
+
+                                 const prevDate = clampedIdx > 0 ? days[clampedIdx - 1] : null;
+                                 const nextDate = clampedIdx < days.length - 1 ? days[clampedIdx + 1] : null;
+
+                                 return (
+                                   <div className="flex items-center gap-2 select-none">
+                                     <button
+                                       onClick={goLeft}
+                                       disabled={!prevDate}
+                                       className="p-2 rounded-xl border border-zinc-800/50 bg-zinc-900/40 text-zinc-500 hover:text-white hover:border-zinc-600 disabled:opacity-20 disabled:cursor-not-allowed transition-all duration-200"
+                                     >
+                                       <ChevronLeft size={16} />
+                                     </button>
+
+                                     <div className="flex items-center gap-1">
+                                       {prevDate && (
+                                         <button onClick={goLeft} className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-600 hover:text-zinc-400 transition-colors duration-200 whitespace-nowrap">
+                                           {fmtLabel(prevDate)}
+                                         </button>
+                                       )}
+                                       <div className="px-6 py-2.5 rounded-xl bg-white/5 border border-white/10 shadow-lg">
+                                         <span className="text-sm font-black text-white whitespace-nowrap">{fmtLabel(focusedDate)}</span>
+                                       </div>
+                                       {nextDate && (
+                                         <button onClick={goRight} className="px-4 py-2 rounded-xl text-xs font-bold text-zinc-600 hover:text-zinc-400 transition-colors duration-200 whitespace-nowrap">
+                                           {fmtLabel(nextDate)}
+                                         </button>
+                                       )}
+                                     </div>
+
+                                     <button
+                                       onClick={goRight}
+                                       disabled={!nextDate}
+                                       className="p-2 rounded-xl border border-zinc-800/50 bg-zinc-900/40 text-zinc-500 hover:text-white hover:border-zinc-600 disabled:opacity-20 disabled:cursor-not-allowed transition-all duration-200"
+                                     >
+                                       <ChevronRight size={16} />
+                                     </button>
+                                   </div>
+                                 );
+                               })()}
                               {activeDurationTab === 'custom' && (
                                 <div className="flex items-center gap-4 bg-zinc-900/40 p-2 rounded-2xl border border-white/5 backdrop-blur-md">
                                   <div className="flex items-center gap-3 px-4 py-1.5 bg-black/40 rounded-xl border border-zinc-800/50">

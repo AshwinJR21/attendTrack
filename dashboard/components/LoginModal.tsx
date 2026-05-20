@@ -46,7 +46,8 @@ export default function LoginModal({ onClose, onLoginSuccess }: LoginModalProps)
     try {
       const res = await loginUser(identifier, password);
       toast.success(`Welcome back, ${res.user.name}!`);
-      localStorage.setItem('user', JSON.stringify(res.user));
+      localStorage.removeItem('user'); // ensure legacy localStorage is cleared
+      sessionStorage.setItem('user', JSON.stringify(res.user));
       onLoginSuccess(res.user);
     } catch (error: any) {
       toast.error(error.message || "Invalid password");
