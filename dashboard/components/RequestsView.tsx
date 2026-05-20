@@ -34,7 +34,7 @@ export interface RequestItem {
 }
 
 export default function RequestsView() {
-  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const stored = typeof window !== 'undefined' ? sessionStorage.getItem('user') : null;
   const user = stored ? JSON.parse(stored) : null;
   const isEmployee = user && user.role === 'employee';
   const isLoggedIn = !!user;

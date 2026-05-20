@@ -117,6 +117,7 @@ export async function loginUser(identifier: string, password: string): Promise<a
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ identifier, password }),
+    credentials: 'include'
   });
   if (!response.ok) {
     const errorData = await response.json();
@@ -165,7 +166,7 @@ export async function verifyOtp(userId: string, otp: string): Promise<any> {
 }
 
 export async function fetchRequests(status: string = 'pending'): Promise<any[]> {
-  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const stored = typeof window !== 'undefined' ? sessionStorage.getItem('user') : null;
   const user = stored ? JSON.parse(stored) : null;
   const requesterId = user ? user.id : '';
 
@@ -173,7 +174,9 @@ export async function fetchRequests(status: string = 'pending'): Promise<any[]> 
     return [];
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/requests?status=${status}&requester_id=${encodeURIComponent(requesterId)}`);
+  const response = await fetch(`${API_BASE_URL}/api/requests?status=${status}&requester_id=${encodeURIComponent(requesterId)}`, {
+    credentials: 'include'
+  });
   if (!response.ok) {
     throw new Error('Failed to fetch requests');
   }
@@ -182,7 +185,7 @@ export async function fetchRequests(status: string = 'pending'): Promise<any[]> 
 }
 
 export async function updateRequestStatus(action: string, requestData?: any): Promise<any> {
-  const stored = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+  const stored = typeof window !== 'undefined' ? sessionStorage.getItem('user') : null;
   const user = stored ? JSON.parse(stored) : null;
   const requesterId = user ? user.id : '';
 
@@ -190,6 +193,7 @@ export async function updateRequestStatus(action: string, requestData?: any): Pr
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, request: requestData, requester_id: requesterId }),
+    credentials: 'include'
   });
   if (!response.ok) {
     const errorData = await response.json();
@@ -197,3 +201,15 @@ export async function updateRequestStatus(action: string, requestData?: any): Pr
   }
   return await response.json();
 }
+
+export async function logoutUser(): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  if (!response.ok) {
+    throw new Error('Failed to logout');
+  }
+  return await response.json();
+}
+
