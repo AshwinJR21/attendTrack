@@ -333,6 +333,12 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
     tag_upper = tag.upper()
     
     # --- VALIDATION LAYER ---
+    # Block logging for invisible employees
+    active_employees = get_active_employees()
+    emp_rec = next((e for e in active_employees if str(e["id"]) == str(emp_id)), None)
+    if emp_rec and emp_rec.get("status") == "invisible":
+        raise ValueError("Attendance logging is disabled for invisible employees.")
+
     last_punch = get_employee_last_punch(emp_id, sheet_name, year)
     last_tag = last_punch["tag"] if last_punch else "OUT"
 
@@ -1095,7 +1101,8 @@ def midnight_rollover():
         print(f"[Midnight Rollover] ERROR during WFH cleanup: {e}")
 
     try:
-        active_employees = get_active_employees()
+        all_employees = get_active_employees()
+        active_employees = [e for e in all_employees if e.get("status") == "active"]
     except Exception as e:
         print(f"[Midnight Rollover] ERROR fetching employees: {e}")
         return
