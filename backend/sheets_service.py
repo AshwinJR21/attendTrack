@@ -318,6 +318,17 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
         )
         _sheet_exists_cache.add(cache_key)
 
+        # Add headers: ID, NAME, TIMESTAMP, TAG, LOCATION
+        headers = [["ID", "NAME", "TIMESTAMP", "TAG", "LOCATION"]]
+        retry_api(
+            lambda: service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{sheet_name}'!A1:E1",
+                valueInputOption="RAW",
+                body={"values": headers}
+            ).execute()
+        )
+
 
 # =========================
 # 1. APPEND ATTENDANCE LOG ROW
