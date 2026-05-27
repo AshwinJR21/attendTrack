@@ -367,7 +367,7 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
 # 1. APPEND ATTENDANCE LOG ROW
 #    Row format: [emp_id, name, timestamp, "IN"/"OUT", location]
 # =========================
-def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, year=None):
+def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, year=None, custom_ts=None):
     if sheet_name is None:
         sheet_name = get_current_sheet_name()
     
@@ -401,7 +401,10 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
             )
     # -----------------------
 
-    timestamp = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+    if custom_ts:
+        timestamp = custom_ts
+    else:
+        timestamp = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
     
     row = [emp_id, name, timestamp, tag_upper, location]
     body = {"values": [row]}
@@ -426,6 +429,7 @@ def append_attendance(emp_id, name, tag, location="Office", sheet_name=None, yea
         _cache_invalidate("rows:")
 
     return timestamp
+
 
 
 # =========================

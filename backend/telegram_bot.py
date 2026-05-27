@@ -2,7 +2,7 @@ import requests
 import re
 import json
 import html
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from sheets_service import (
     TELEGRAM_TOKEN,
@@ -18,7 +18,8 @@ from sheets_service import (
     get_pending_wfh_count,
     append_attendance,
     get_ist_now,
-    cancel_wfh_for_date
+    cancel_wfh_for_date,
+    IST_TZ
 )
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
@@ -119,11 +120,11 @@ def handle_webhook(update):
         return
 
     if text == "/in":
-        handle_attendance(chat_id, user_id, "IN")
+        handle_attendance(chat_id, user_id, "IN", msg.get("date"))
         return
 
     if text == "/out":
-        handle_attendance(chat_id, user_id, "OUT")
+        handle_attendance(chat_id, user_id, "OUT", msg.get("date"))
         return
 
     if text.startswith("/wfh"):
@@ -157,14 +158,18 @@ def handle_register(chat_id, user_id, text):
     else:
         send_message(chat_id, "❌ Invalid Employee ID. Please check and try again.")
 
-def handle_attendance(chat_id, user_id, tag):
+def handle_attendance(chat_id, user_id, tag, msg_date=None):
     emp = get_employee_by_tg_id(user_id)
     if not emp:
         send_message(chat_id, "⚠️ Please register first using /register &lt;EMP_ID&gt;")
         return
 
-    # Check for approved WFH
-    now = get_ist_now()
+    # Check for approved WFH using the message date if available
+    if msg_date:
+        now = datetime.fromtimestamp(msg_date, tz=timezone.utc).astimezone(IST_TZ)
+    else:
+        now = get_ist_now()
+
     if not has_approved_wfh(now.date(), tg_id=user_id):
         send_message(chat_id, "❌ You do not have an approved WFH request for today.")
         return
@@ -173,7 +178,8 @@ def handle_attendance(chat_id, user_id, tag):
     emp_name = emp.get("name")
     
     try:
-        timestamp = append_attendance(emp_id, emp_name, tag, location="Home")
+        custom_ts = now.strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = append_attendance(emp_id, emp_name, tag, location="Home", custom_ts=custom_ts)
         send_message(chat_id, f"✅ {tag} marked at {timestamp} (Location: Home).")
         from event_bus import notify_clients
         notify_clients()
