@@ -310,7 +310,7 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
 
     if sheet_name not in existing_sheets:
         requests = [{"addSheet": {"properties": {"title": sheet_name}}}]
-        retry_api(
+        res = retry_api(
             lambda: service.spreadsheets().batchUpdate(
                 spreadsheetId=spreadsheet_id,
                 body={"requests": requests}
@@ -328,6 +328,39 @@ def ensure_sheet_exists(sheet_name, spreadsheet_id=None):
                 body={"values": headers}
             ).execute()
         )
+
+        # Style headers as Bold
+        try:
+            sheet_id = res["replies"][0]["addSheet"]["properties"]["sheetId"]
+            bold_request = [
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": 0,
+                            "endRowIndex": 1,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": 5
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "textFormat": {
+                                    "bold": True
+                                }
+                            }
+                        },
+                        "fields": "userEnteredFormat.textFormat.bold"
+                    }
+                }
+            ]
+            retry_api(
+                lambda: service.spreadsheets().batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={"requests": bold_request}
+                ).execute()
+            )
+        except Exception as e:
+            print(f"[sheets_service] Warning: Failed to style headers as bold: {e}")
 
 
 # =========================
