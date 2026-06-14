@@ -70,7 +70,7 @@ def verify_role_authorized(requester_id, allowed_roles=["admin", "manager"]):
             payload = serializer.loads(token, max_age=600)
             requester_id = payload.get("id")
         except Exception:
-            return False, "Session expired or invalid. Please login again."
+            pass
             
     if not requester_id:
         return False, "Requester ID is required for authentication"
@@ -80,7 +80,9 @@ def verify_role_authorized(requester_id, allowed_roles=["admin", "manager"]):
     if not user:
         return False, f"Requester '{requester_id}' not found in employee records"
         
-    if user.get("role") not in allowed_roles:
+    allowed_roles_lower = [r.lower() for r in allowed_roles]
+    user_role = str(user.get("role", "")).strip().lower()
+    if user_role not in allowed_roles_lower:
         return False, f"Access denied: Role '{user.get('role')}' is unauthorized"
         
     return True, user

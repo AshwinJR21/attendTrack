@@ -111,7 +111,7 @@ export default function LoginModal({ onClose, onLoginSuccess }: LoginModalProps)
             <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 border border-white/10 group hover:border-emerald-500/50 transition-all duration-500">
               <Shield className="w-8 h-8 text-emerald-400 group-hover:scale-110 transition-transform duration-500" />
             </div>
-            <h1 className="text-3xl font-black tracking-tight text-white mb-2">Workforce</h1>
+            <h1 className="text-3xl font-black tracking-tight text-white mb-2">Realworks</h1>
             <p className="text-zinc-500 text-sm font-medium uppercase tracking-[0.2em]">Management System</p>
           </div>
 
@@ -295,9 +295,6 @@ export default function LoginModal({ onClose, onLoginSuccess }: LoginModalProps)
         
         {/* Footer info */}
         <div className="mt-8 flex flex-col items-center gap-4">
-          <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-[0.3em]">
-            Secure Access Protocol v2.4.0
-          </p>
         </div>
       </div>
     </div>

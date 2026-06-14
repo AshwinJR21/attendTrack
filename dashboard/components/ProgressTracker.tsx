@@ -14,7 +14,7 @@ const MODES: Record<ViewMode, { start: number, end: number, label: string, icon:
 interface Session {
   start: number;
   end: number | null;
-  type: 'green' | 'red';
+  type: 'green' | 'red' | 'yellow' | 'blank';
 }
 
 type DurationTab = 'day' | 'week' | 'month' | 'year' | 'custom';
@@ -42,6 +42,107 @@ interface Person {
     custom: StatPeriod;
   };
   heatmapData: Record<string, number>;
+}
+
+function getVisualSegments(
+  sessions: Session[],
+  currentMinutes: number,
+  isToday: boolean
+): Session[] {
+  const timeline = new Array<'green' | 'red' | 'yellow' | 'blank'>(1440).fill('blank');
+
+  const greenIntervals: { start: number; end: number }[] = [];
+  sessions.forEach(s => {
+    if (s.type === 'green') {
+      const start = Math.max(0, Math.min(1439, Math.round(s.start)));
+      const rawEnd = s.end === null ? currentMinutes : s.end;
+      const end = Math.max(start, Math.min(1440, Math.round(rawEnd)));
+      for (let i = start; i < end; i++) {
+        timeline[i] = 'green';
+      }
+      greenIntervals.push({ start, end });
+    }
+  });
+
+  let firstGreenStart = 1440;
+  greenIntervals.forEach(g => {
+    if (g.start < firstGreenStart) {
+      firstGreenStart = g.start;
+    }
+  });
+
+  const coreStart = 600;
+  const coreEnd = 1140;
+
+  const lateEndLimit = isToday ? Math.min(coreEnd, Math.round(currentMinutes)) : coreEnd;
+
+  if (firstGreenStart > coreStart) {
+    const yellowEnd = Math.min(firstGreenStart, lateEndLimit);
+    for (let i = coreStart; i < yellowEnd; i++) {
+      if (timeline[i] !== 'green') {
+        timeline[i] = 'yellow';
+      }
+    }
+  }
+
+  const coreEndLimit = isToday ? Math.min(coreEnd, Math.round(currentMinutes)) : coreEnd;
+
+  for (let i = coreStart; i < coreEndLimit; i++) {
+    if (timeline[i] !== 'green' && timeline[i] !== 'yellow') {
+      timeline[i] = 'red';
+    }
+  }
+
+  const morningGreens = greenIntervals
+    .filter(g => g.start < coreStart)
+    .sort((a, b) => a.start - b.start);
+  if (morningGreens.length > 1) {
+    const firstMorningEnd = morningGreens[0].end;
+    const lastMorningStart = morningGreens[morningGreens.length - 1].start;
+    for (let i = firstMorningEnd; i < lastMorningStart; i++) {
+      if (timeline[i] === 'blank') {
+        timeline[i] = 'red';
+      }
+    }
+  }
+
+  const eveningGreens = greenIntervals
+    .filter(g => g.end > coreEnd)
+    .sort((a, b) => a.start - b.start);
+  if (eveningGreens.length > 1) {
+    const firstEveningEnd = eveningGreens[0].end;
+    const lastEveningStart = eveningGreens[eveningGreens.length - 1].start;
+    for (let i = firstEveningEnd; i < lastEveningStart; i++) {
+      if (timeline[i] === 'blank') {
+        timeline[i] = 'red';
+      }
+    }
+  }
+
+  const segments: Session[] = [];
+  if (timeline.length === 0) return [];
+
+  let currentType = timeline[0];
+  let start = 0;
+
+  for (let i = 1; i < timeline.length; i++) {
+    if (timeline[i] !== currentType) {
+      segments.push({ start, end: i, type: currentType });
+      currentType = timeline[i];
+      start = i;
+    }
+  }
+  segments.push({ start, end: timeline.length, type: currentType });
+
+  const lastGreenSession = [...sessions].reverse().find(s => s.type === 'green');
+  if (lastGreenSession && lastGreenSession.end === null) {
+    const lastGreenSeg = [...segments].reverse().find(seg => seg.type === 'green');
+    if (lastGreenSeg) {
+      lastGreenSeg.end = null;
+    }
+  }
+
+  return segments;
 }
 
 const RANDOM_NAMES = [
@@ -80,6 +181,7 @@ export default function ProgressTracker() {
     visible: boolean;
   } | null>(null);
   const popupTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const totalChartMinutes = 24 * 60;
 
@@ -440,17 +542,32 @@ export default function ProgressTracker() {
     };
   };
 
-  const formatTime = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const formatTime = (d: Date, includeSeconds = true) => {
+    return d.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      ...(includeSeconds ? { second: '2-digit' } : {}),
+      hour12: true
+    });
+  };
 
-  const formatDuration = (startMins: number, endMins: number) => {
+  const formatDuration = (startMins: number, endMins: number, includeSeconds = true) => {
     const diff = endMins - startMins;
-    const totalSeconds = Math.floor(diff * 60);
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    if (h > 0) return `${h}h ${m}m ${s}s`;
-    if (m > 0) return `${m}m ${s}s`;
-    return `${s}s`;
+    if (includeSeconds) {
+      const totalSeconds = Math.floor(diff * 60);
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = totalSeconds % 60;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    } else {
+      const roundedMins = Math.round(diff);
+      const rh = Math.floor(roundedMins / 60);
+      const rm = roundedMins % 60;
+      if (rh > 0) return `${rh}h ${rm}m`;
+      return `${rm}m`;
+    }
   };
 
   const renderHeatmap = (person: Person, tab: DurationTab, startStr: string, endStr: string, mode: 'rolling' | 'current') => {
@@ -735,19 +852,11 @@ export default function ProgressTracker() {
     }
   };
 
-  const handleSessionClick = (e: React.MouseEvent, person: Person, session: Session) => {
-    e.stopPropagation();
-    if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
-    setPopupData({
-      session,
-      personName: person.name,
-      x: e.clientX,
-      y: e.clientY,
-      visible: true
-    });
-  };
-
   const handlePopupMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
     if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
     setPopupData(prev => prev ? { ...prev, visible: true } : null);
   };
@@ -761,6 +870,10 @@ export default function ProgressTracker() {
   };
 
   const handleSessionMouseLeave = (session: Session) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
     setPopupData(prev => {
       if (prev && prev.session === session) {
         if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
@@ -773,14 +886,39 @@ export default function ProgressTracker() {
     });
   };
 
-  const handleSessionMouseEnter = (session: Session) => {
+  const handleSessionMouseEnter = (e: React.MouseEvent, person: Person, session: Session) => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
+
+    const x = e.clientX;
+    const y = e.clientY;
+
+    let isAlreadyVisible = false;
     setPopupData(prev => {
-      if (prev && prev.session === session) {
-        if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
-        return { ...prev, visible: true };
+      if (prev && prev.visible) {
+        isAlreadyVisible = true;
+        return {
+          session,
+          personName: person.name,
+          x,
+          y,
+          visible: true
+        };
       }
       return prev;
     });
+
+    if (!isAlreadyVisible) {
+      hoverTimeoutRef.current = setTimeout(() => {
+        setPopupData({
+          session,
+          personName: person.name,
+          x,
+          y,
+          visible: true
+        });
+      }, 1000);
+    }
   };
 
   const timeMarkers = useMemo(() => {
@@ -1116,7 +1254,29 @@ export default function ProgressTracker() {
                   </div>
 
                   {/* Rows Container */}
-                  <div className="relative flex-1 flex flex-col overflow-hidden">
+                  <div 
+                    className="relative flex-1 flex flex-col overflow-hidden"
+                    onMouseLeave={(e) => {
+                      const relatedTarget = e.relatedTarget as HTMLElement;
+                      if (relatedTarget && typeof relatedTarget.closest === 'function' && relatedTarget.closest('.popup-card')) {
+                        return;
+                      }
+                      if (hoverTimeoutRef.current) {
+                        clearTimeout(hoverTimeoutRef.current);
+                        hoverTimeoutRef.current = null;
+                      }
+                      setPopupData(prev => {
+                        if (prev) {
+                          if (popupTimeoutRef.current) clearTimeout(popupTimeoutRef.current);
+                          popupTimeoutRef.current = setTimeout(() => {
+                            setPopupData(p => p?.visible === false ? null : p);
+                          }, 700);
+                          return { ...prev, visible: false };
+                        }
+                        return null;
+                      });
+                    }}
+                  >
                     <div 
                       className={`px-12 flex flex-col transition-all duration-700 ${isBuffering ? 'opacity-5 grayscale scale-[0.98] blur-sm' : 'opacity-100 grayscale-0 scale-100 blur-0'} ${!searchQuery && filteredPeople.length > 1 ? 'h-full' : ''}`}
                     >
@@ -1125,28 +1285,34 @@ export default function ProgressTracker() {
                         return (
                           <div key={person.id} className={`${rowHeightClass} flex items-center relative group border-b border-white/[0.03] even:bg-white/[0.01]`}>
                             <div className="absolute -inset-x-6 inset-y-0 bg-white/[0.02] opacity-0 group-hover:opacity-100 transition-all duration-500 pointer-events-none"></div>
-                            <div className="w-full h-6 bg-black/60 rounded-full overflow-hidden relative border border-zinc-800/30 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]">
-                              {person.sessions.map((session, sIdx) => {
-                                const startPct = (session.start / totalChartMinutes) * 100;
-                                const endPct = ((session.end || currentMinutesFromChartStart) / totalChartMinutes) * 100;
-                                const isGrowing = session.end === null;
-                                return (
-                                  <div
-                                    key={sIdx}
-                                    onClick={(e) => handleSessionClick(e, person, session)}
-                                    onMouseEnter={() => handleSessionMouseEnter(session)}
-                                    onMouseLeave={() => handleSessionMouseLeave(session)}
-                                    className={`absolute top-0 h-full rounded-full transition-all duration-700 ease-out cursor-pointer hover:brightness-110 ${
-                                      session.type === 'green' 
-                                        ? (person.location === 'Home'
-                                            ? 'bg-gradient-to-r from-cyan-600 via-cyan-500 ' + (isGrowing ? 'to-cyan-400/90' : 'to-cyan-400') + ' shadow-[0_0_25px_rgba(6,182,212,0.15)]'
-                                            : 'bg-gradient-to-r from-emerald-600 via-emerald-500 ' + (isGrowing ? 'to-emerald-400/90' : 'to-emerald-400') + ' shadow-[0_0_25px_rgba(16,185,129,0.15)]')
-                                        : 'bg-gradient-to-r from-rose-600 via-rose-500 ' + (isGrowing ? 'to-rose-400/90' : 'to-rose-400') + ' shadow-[0_0_25px_rgba(244,63,94,0.15)]'
-                                    }`}
-                                    style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
-                                  />
-                                );
-                              })}
+                            <div className="w-full h-[22px] bg-black/60 rounded-full overflow-hidden relative border border-zinc-800/30 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)]">
+                              {(() => {
+                                const visualSegments = getVisualSegments(person.sessions, currentMinutesFromChartStart, focusedDate === todayStr);
+                                return visualSegments.map((session, sIdx) => {
+                                  if (session.type === 'blank') return null;
+                                  const startPct = (session.start / totalChartMinutes) * 100;
+                                  const endPct = ((session.end || currentMinutesFromChartStart) / totalChartMinutes) * 100;
+                                  const isGrowing = session.end === null;
+                                  return (
+                                    <div
+                                      key={sIdx}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onMouseEnter={(e) => handleSessionMouseEnter(e, person, session)}
+                                      onMouseLeave={() => handleSessionMouseLeave(session)}
+                                      className={`absolute top-0 h-full rounded-full transition-all duration-700 ease-out cursor-pointer hover:brightness-110 ${
+                                        session.type === 'green' 
+                                          ? (person.location === 'Home'
+                                              ? 'bg-gradient-to-r from-cyan-600 via-cyan-500 ' + (isGrowing ? 'to-cyan-400/90' : 'to-cyan-400') + ' shadow-[0_0_25px_rgba(6,182,212,0.15)]'
+                                              : 'bg-gradient-to-r from-emerald-600 via-emerald-500 ' + (isGrowing ? 'to-emerald-400/90' : 'to-emerald-400') + ' shadow-[0_0_25px_rgba(16,185,129,0.15)]')
+                                          : session.type === 'yellow'
+                                            ? 'bg-gradient-to-r from-amber-600 via-amber-500 ' + (isGrowing ? 'to-amber-400/90' : 'to-amber-400') + ' shadow-[0_0_25px_rgba(245,158,11,0.15)]'
+                                            : 'bg-gradient-to-r from-rose-600 via-rose-500 ' + (isGrowing ? 'to-rose-400/90' : 'to-rose-400') + ' shadow-[0_0_25px_rgba(244,63,94,0.15)]'
+                                      }`}
+                                      style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
+                                    />
+                                  );
+                                });
+                              })()}
                             </div>
                           </div>
                         );
@@ -1483,7 +1649,7 @@ export default function ProgressTracker() {
 
       {popupData && (
         <div 
-          className={`fixed z-[200] w-64 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 ease-in-out pointer-events-auto ${
+          className={`popup-card fixed z-[200] w-64 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 ease-in-out pointer-events-auto ${
             popupData.visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'
           }`}
           style={{ 
@@ -1496,25 +1662,40 @@ export default function ProgressTracker() {
           <div className="flex items-center justify-between mb-3">
              <span className="text-xs font-black text-white uppercase tracking-widest">{popupData.personName}</span>
              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
-               popupData.session.type === 'green' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+               popupData.session.type === 'green' 
+                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                 : popupData.session.type === 'yellow'
+                   ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                   : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
              }`}>
-               {popupData.session.type === 'green' ? 'IN (Active)' : 'OUT (Break)'}
+               {popupData.session.type === 'green' 
+                 ? 'IN (Active)' 
+                 : popupData.session.type === 'yellow'
+                   ? 'LATE (Expected)'
+                   : 'OUT (Break)'}
              </span>
           </div>
           <div className="space-y-2">
-             <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
-               <span>Start Time</span>
-               <span className="text-white">{formatTime(getDateFromChartMinutes(popupData.session.start))}</span>
-             </div>
-             <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
-               <span>End Time</span>
-               <span className="text-white">{popupData.session.end ? formatTime(getDateFromChartMinutes(popupData.session.end)) : 'Ongoing'}</span>
-             </div>
-             <div className="h-px w-full bg-white/5 my-2"></div>
-             <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
-               <span>Duration</span>
-               <span className="text-emerald-400 font-black">{formatDuration(popupData.session.start, popupData.session.end || currentMinutesFromChartStart)}</span>
-             </div>
+            {(() => {
+                const isOngoing = popupData.session.end === null;
+                return (
+                  <>
+                    <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
+                      <span>Start Time</span>
+                      <span className="text-white">{formatTime(getDateFromChartMinutes(popupData.session.start), isOngoing)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
+                      <span>End Time</span>
+                      <span className="text-white">{popupData.session.end ? formatTime(getDateFromChartMinutes(popupData.session.end), isOngoing) : 'Ongoing'}</span>
+                    </div>
+                    <div className="h-px w-full bg-white/5 my-2"></div>
+                    <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold tracking-wider">
+                      <span>Duration</span>
+                      <span className="text-emerald-400 font-black">{formatDuration(popupData.session.start, popupData.session.end || currentMinutesFromChartStart, isOngoing)}</span>
+                    </div>
+                  </>
+                );
+              })()}
           </div>
         </div>
       )}

@@ -7,6 +7,7 @@ import AnalyticsView from '@/components/AnalyticsView';
 import EmployeeRequestsView from '@/components/EmployeeRequestsView';
 import EmployeeLeaveStats from '@/components/EmployeeLeaveStats';
 import LoginModal from '@/components/LoginModal';
+import DesignTokensView from '@/components/DesignTokensView';
 import { 
   LayoutDashboard, 
   ClipboardList, 
@@ -18,11 +19,12 @@ import {
   XCircle,
   AlertTriangle,
   LineChart,
+  Palette,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { logoutUser } from '@/lib/api';
 
-type Tab = 'dashboard' | 'requests' | 'analytics' | 'emp-requests' | 'emp-stats';
+type Tab = 'dashboard' | 'requests' | 'analytics' | 'emp-requests' | 'emp-stats' | 'design-tokens';
 
 export default function Page() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -65,7 +67,7 @@ export default function Page() {
     }
 
     const storedTab = localStorage.getItem('activeTab');
-    const validTabs: Tab[] = ['dashboard', 'requests', 'analytics', 'emp-requests', 'emp-stats'];
+    const validTabs: Tab[] = ['dashboard', 'requests', 'analytics', 'emp-requests', 'emp-stats', 'design-tokens'];
     if (storedTab && validTabs.includes(storedTab as Tab)) {
       setActiveTab(storedTab as Tab);
     }
@@ -193,13 +195,26 @@ export default function Page() {
       {/* Integrated Global Header Dropdown */}
       <div className="fixed top-6 right-10 z-[100]">
         {!isLoggedIn ? (
-          <button 
-            onClick={() => setShowLoginModal(true)}
-            className="flex items-center justify-center w-12 h-12 rounded-2xl bg-zinc-900/80 border border-white/[0.05] hover:bg-white/[0.05] text-zinc-400 hover:text-white transition-all duration-300 shadow-2xl backdrop-blur-xl"
-            title="Operator Login"
-          >
-            <LogIn size={20} />
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => { changeTab(activeTab === 'design-tokens' ? 'dashboard' : 'design-tokens'); }}
+              className={`flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-300 border backdrop-blur-xl ${
+                activeTab === 'design-tokens' 
+                  ? 'bg-emerald-500 text-black border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' 
+                  : 'bg-zinc-900/80 border-white/[0.05] text-zinc-400 hover:text-white hover:bg-white/[0.05]'
+              }`}
+              title="Design System Tokens"
+            >
+              <Palette size={20} />
+            </button>
+            <button 
+              onClick={() => setShowLoginModal(true)}
+              className="flex items-center justify-center w-12 h-12 rounded-2xl bg-zinc-900/80 border border-white/[0.05] hover:bg-white/[0.05] text-zinc-400 hover:text-white transition-all duration-300 shadow-2xl backdrop-blur-xl"
+              title="Operator Login"
+            >
+              <LogIn size={20} />
+            </button>
+          </div>
         ) : (
           <div className="relative">
             <button 
@@ -226,6 +241,14 @@ export default function Page() {
                     onClick={() => { changeTab('dashboard'); setIsDropdownOpen(false); }} 
                     icon={<LayoutDashboard size={16} />} 
                     label="Dashboard" 
+                  />
+
+                  {/* Always: Design Tokens */}
+                  <DropdownItem 
+                    active={activeTab === 'design-tokens'} 
+                    onClick={() => { changeTab('design-tokens'); setIsDropdownOpen(false); }} 
+                    icon={<Palette size={16} />} 
+                    label="Design Tokens" 
                   />
 
                   {/* Admin / Manager nav */}
@@ -286,6 +309,7 @@ export default function Page() {
         {activeTab === 'analytics'     && <AnalyticsView />}
         {activeTab === 'emp-requests'  && <EmployeeRequestsView user={currentUser} />}
         {activeTab === 'emp-stats'     && <EmployeeLeaveStats user={currentUser} />}
+        {activeTab === 'design-tokens' && <DesignTokensView />}
       </div>
 
       {/* Login Modal Overlay */}
