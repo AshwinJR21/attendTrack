@@ -1,6 +1,6 @@
 [Unit]
 Description=Attendance Tracker Backend Service
-After=network.target tailscaled.service
+After=network.target
 
 [Service]
 User=<YOUR_USERNAME>

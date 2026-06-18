@@ -8,7 +8,6 @@ This guide provides step-by-step instructions for setting up the Attendance Trac
 Ensure you have the following installed on your system:
 - **Python 3.8+**
 - **Bun** (recommended) or **Node.js**
-- **Tailscale** (for remote access/funneling)
 - **Git**
 
 ---
@@ -32,23 +31,18 @@ The project uses Google Sheets as a database and Google Drive for file managemen
     - Save the downloaded file as `credentials.json` in the `backend/` directory of this project.
 5.  **Copy the Email**: Note the service account email (e.g., `service-account@project-id.iam.gserviceaccount.com`). You will need this to share sheets later.
 
-### B. Telegram Bot
-1.  **Create a Bot**:
-    - Open Telegram and search for [@BotFather](https://t.me/botfather).
-    - Send `/newbot`, give it a name (e.g., `AttendTrackBot`), and a username (e.g., `my_attendtrack_bot`).
-    - Copy the **API Token** provided.
-2.  **Get Your Admin Chat ID**:
-    - Search for [@userinfobot](https://t.me/userinfobot) or [@IDBot](https://t.me/myidbot) on Telegram.
-    - Send any message to get your unique **Chat ID**. You will use this as the `ADMIN_CHAT_ID` for approvals.
-
-### C. Tailscale (Remote Access)
-Tailscale is used to securely expose your local backend to the internet (optional but required for the mobile app and Telegram webhooks).
-
-1.  **Install Tailscale**: Download and install from [tailscale.com](https://tailscale.com/download).
-2.  **Enable Funnel**:
-    - Log in to your Tailscale admin console.
-    - Go to **Access Control** and ensure you have the `funnel` capability enabled in your ACL.
-    - On your machine, ensure Tailscale is running: `tailscale up`.
+### B. Discord Bot
+1.  **Create an Application**:
+    - Go to the [Discord Developer Portal](https://discord.com/developers/applications).
+    - Click **New Application** and give it a name.
+    - Go to the **Bot** tab and click **Reset Token** to get your **API Token**.
+2.  **Enable Intents**:
+    - Under the **Bot** tab, enable **Server Members Intent** and **Message Content Intent**.
+3.  **Get Your IDs**:
+    - In Discord Settings > Advanced, enable **Developer Mode**.
+    - Right-click your server's WFH request channel and select **Copy Channel ID** (`REQUEST_CHANNEL_ID`).
+    - Right-click the admin notification channel and select **Copy Channel ID** (`ADMIN_CHANNEL_ID`).
+    - Right-click an admin's profile and select **Copy User ID** to add to `ADMIN_CHAT_ID`.
 
 ---
 
@@ -70,8 +64,10 @@ Tailscale is used to securely expose your local backend to the internet (optiona
 4.  **Configure Environment Variables**:
     Create a `.env` file in the `backend/` directory:
     ```env
-    TELEGRAM_TOKEN=your_telegram_bot_token_here
-    ADMIN_CHAT_ID=your_chat_id_here
+    DISCORD_TOKEN=your_discord_bot_token_here
+    ADMIN_CHAT_ID=your_admin_user_id
+    REQUEST_CHANNEL_ID=your_request_channel_id
+    ADMIN_CHANNEL_ID=your_admin_channel_id
     GOOGLE_SERVICE_ACCOUNT_FILE=credentials.json
     ```
     *Note: Ensure `credentials.json` (the Google Service Account key) is in the `backend/` folder.*
@@ -91,9 +87,8 @@ Tailscale is used to securely expose your local backend to the internet (optiona
 3.  **Configure Environment**:
     Create a `.env` file in the `frontend/` directory (you can copy `.env.example` as a template):
     ```env
-    VITE_API_BASE=https://your-backend-funnel-url.tail-net.ts.net
+    VITE_API_BASE=http://localhost:5000
     ```
-    *Note: For the APK to work, this **must** be a public URL (like Tailscale Funnel) or a network-accessible IP.*
 
 ---
 
@@ -115,27 +110,7 @@ The Next.js interactive workforce analytics dashboard allows real-time status an
 
 ---
 
-## 5. Packaging the Android APK
-Since the project uses **Capacitor**, you can generate an Android APK yourself.
 
-1.  **Build the Frontend**:
-    ```bash
-    cd frontend
-    bun run build  # or 'npm run build'
-    ```
-2.  **Sync with Android Project**:
-    ```bash
-    npx cap sync
-    ```
-3.  **Build the APK**:
-    - Open the `frontend/android` folder in **Android Studio**.
-    - Go to **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
-    - Android Studio will generate the APK and provide a link to the folder.
-
-> [!IMPORTANT]
-> Ensure your `VITE_API_BASE` is set correctly *before* running `bun run build`. The APK will bake this URL into its code.
-
----
 
 ## 6. Running the Application
 
@@ -145,29 +120,13 @@ cd backend
 source venv/bin/activate
 python app.py
 ```
-The backend will run on `http://0.0.0.0:5000`.
-
-### Step 2: Start Tailscale Funnel (For Webhooks & Mobile)
-Open a new terminal:
-```bash
-sudo tailscale funnel 5000
-```
-Tailscale will provide you with a public URL (e.g., `https://machine-name.tail-net.ts.net`).
-
-### Step 3: Setup Telegram Webhook
-Open another terminal:
-```bash
-cd backend
-source venv/bin/activate
-python setup_webhook.py https://your-tailscale-funnel-url
-```
+The backend will run on `http://0.0.0.0:5000` and start the Discord bot in the background.
 
 ### Step 4: Start the Frontend
 ```bash
 cd frontend
 bun dev
 ```
-Update your `frontend/.env` with the URL from Step 2 if you want to test the mobile/remote flow.
 
 ### Step 5: Start the Dashboard (For LAN access)
 ```bash

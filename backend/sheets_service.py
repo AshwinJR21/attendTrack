@@ -99,7 +99,7 @@ EMPLOYEE_MASTER_SHEET = "employee_master"
 WFH_REQUESTS_SHEET = "wfh_requests"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 _admin_raw = os.getenv("ADMIN_CHAT_ID", "").strip()
 ADMIN_IDS = [x.strip() for x in _admin_raw.split(",") if x.strip()]
 
@@ -210,8 +210,8 @@ def ensure_wfh_sheet_exists(spreadsheet_id):
         requests = [{"addSheet": {"properties": {"title": WFH_REQUESTS_SHEET}}}]
         retry_api(lambda: service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests}).execute())
         
-        # Add headers: [TG_ID, START, TO, ID, NAME, STATUS]
-        headers = [["telegram_id", "from", "to", "employee_id", "name", "status"]]
+        # Add headers: [DISCORD_ID, START, TO, ID, NAME, STATUS]
+        headers = [["discord_id", "from", "to", "employee_id", "name", "status"]]
         retry_api(lambda: service.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
             range=f"'{WFH_REQUESTS_SHEET}'!A1:F1",
@@ -559,7 +559,7 @@ def get_active_employees():
                 "id": record.get("employee_id", record.get("id", "")),
                 "name": record.get("name", record.get("employee_name", "")),
                 "status": status,
-                "telegram_id": record.get("telegram_id", ""),
+                "discord_id": record.get("discord_id", ""),
                 "phone": record.get("phone", record.get("phone_number", "")),
                 "role": record.get("role", "employee").lower(),
                 "pwd_hash": record.get("pwd", ""),
@@ -609,7 +609,7 @@ def validate_credentials(identifier, password):
     return False, "Invalid password"
 
 def generate_auth_otp(identifier):
-    """Generates and sends an OTP to the user's Telegram ID."""
+    """Generates and sends an OTP to the user's Discord ID."""
     employees = get_active_employees()
     user = None
     identifier_low = identifier.lower().strip()
@@ -622,11 +622,11 @@ def generate_auth_otp(identifier):
     if not user:
         return False, "User not found"
         
-    tg_id = str(user.get('telegram_id', '')).strip()
-    if not tg_id or tg_id == '-':
-        return False, "No Telegram ID found for this account"
+    discord_id = str(user.get('discord_id', '')).strip()
+    if not discord_id or discord_id == '-':
+        return False, "No Discord ID found for this account"
         
-    # Security Check: Active users can request OTPs directly to their admin-registered Telegram IDs.
+    # Security Check: Active users can request OTPs directly to their admin-registered Discord IDs.
 
         
     import random
@@ -635,19 +635,14 @@ def generate_auth_otp(identifier):
     # Cache OTP for 5 minutes
     _cache_set(f"otp:{user['id']}", otp, 300)
     
-    # Send via Telegram
+    # Send via Discord
     try:
-        import requests
-        msg = f"🔐 *Workforce Auth*\n\nYour OTP for password reset is: `{otp}`\n\nThis code expires in 5 minutes."
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={
-            "chat_id": tg_id,
-            "text": msg,
-            "parse_mode": "Markdown"
-        })
-        return True, {"id": user['id'], "telegram_id": tg_id}
+        from discord_bot import send_discord_message_sync
+        msg = f"🔐 **Workforce Auth**\n\nYour OTP for password reset is: `{otp}`\n\nThis code expires in 5 minutes."
+        send_discord_message_sync(discord_id, msg)
+        return True, {"id": user['id'], "discord_id": discord_id}
     except Exception as e:
-        return False, f"Failed to send Telegram message: {str(e)}"
+        return False, f"Failed to send Discord message: {str(e)}"
 
 def verify_otp_only(user_id, otp):
     """Checks if the OTP is valid without resetting password."""
@@ -726,7 +721,7 @@ def get_user_by_identifier(identifier):
     headers = [h.strip().lower() for h in rows[0]]
     id_idx = headers.index("employee_id") if "employee_id" in headers else (headers.index("id") if "id" in headers else 0)
     name_idx = headers.index("name") if "name" in headers else 1
-    tg_idx = headers.index("telegram_id") if "telegram_id" in headers else -1
+    discord_idx = headers.index("discord_id") if "discord_id" in headers else -1
     role_idx = headers.index("role") if "role" in headers else -1
     
     ident_lower = str(identifier).strip().lower()
@@ -737,21 +732,21 @@ def get_user_by_identifier(identifier):
             return {
                 "id": row[id_idx],
                 "name": row[name_idx],
-                "telegram_id": row[tg_idx] if tg_idx != -1 and len(row) > tg_idx else None,
+                "discord_id": row[discord_idx] if discord_idx != -1 and len(row) > discord_idx else None,
                 "role": row[role_idx] if role_idx != -1 and len(row) > role_idx else "user"
             }
     return None
 
 
 # =========================
-# TELEGRAM HELPERS
+# DISCORD HELPERS
 # =========================
 
-def get_employee_by_tg_id(tg_id):
-    """Finds an employee record by their Telegram user ID."""
+def get_employee_by_discord_id(discord_id):
+    """Finds an employee record by their Discord user ID."""
     employees = get_active_employees_full_data()
     for emp in employees:
-        if str(emp.get("telegram_id")) == str(tg_id):
+        if str(emp.get("discord_id")) == str(discord_id):
             return emp
     return None
 
@@ -773,38 +768,38 @@ def get_active_employees_full_data():
         employees.append(dict(zip(headers, padded)))
     return employees
 
-def register_tg_id(emp_id, tg_id):
-    """Links a Telegram ID to an employee ID in the master sheet."""
+def register_discord_id(emp_id, discord_id):
+    """Links a Discord ID to an employee ID in the master sheet."""
     spreadsheet_id = get_master_spreadsheet_id()
     data = get_active_employees_full_data()
     headers = retry_api(lambda: service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id, range=f"'{EMPLOYEE_MASTER_SHEET}'!1:1"
     ).execute()).get("values", [[]])[0]
     
-    tg_col_idx = -1
+    discord_col_idx = -1
     for i, h in enumerate(headers):
-        if h.strip().upper() == "TELEGRAM_ID":
-            tg_col_idx = i
+        if h.strip().upper() == "DISCORD_ID":
+            discord_col_idx = i
             break
             
-    if tg_col_idx == -1:
+    if discord_col_idx == -1:
         # Add column if missing (though user said it exists)
-        tg_col_idx = len(headers)
-        col_letter = chr(65 + tg_col_idx)
+        discord_col_idx = len(headers)
+        col_letter = chr(65 + discord_col_idx)
         retry_api(lambda: service.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id, range=f"'{EMPLOYEE_MASTER_SHEET}'!{col_letter}1",
-            valueInputOption="RAW", body={"values": [["TELEGRAM_ID"]]}
+            valueInputOption="RAW", body={"values": [["DISCORD_ID"]]}
         ).execute())
 
     for i, emp in enumerate(data):
         if str(emp.get("employee_id", emp.get("id"))) == str(emp_id):
             row_num = i + 2
-            col_letter = chr(65 + tg_col_idx)
+            col_letter = chr(65 + discord_col_idx)
             retry_api(lambda: service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
                 range=f"'{EMPLOYEE_MASTER_SHEET}'!{col_letter}{row_num}",
                 valueInputOption="RAW",
-                body={"values": [[str(tg_id)]]}
+                body={"values": [[str(discord_id)]]}
             ).execute())
             return emp.get("name", "Employee")
     return None
@@ -828,25 +823,25 @@ def get_all_wfh_requests():
     _cache_set(cache_key, rows, 10) # 10-second TTL is enough for a single request loop
     return rows
 
-def has_approved_wfh(target_date, tg_id=None, emp_id=None):
+def has_approved_wfh(target_date, discord_id=None, emp_id=None):
     """Checks if a user has an approved WFH entry for a specific date.
-    Can check by either telegram_id or employee_id.
+    Can check by either discord_id or employee_id.
     Uses cached data to avoid hitting API quotas.
     """
-    if not tg_id and not emp_id:
+    if not discord_id and not emp_id:
         return False
 
     rows = get_all_wfh_requests()
     if not rows or len(rows) < 2: return False
     
-    # Headers: [telegram_id, from, to, employee_id, name, status]
+    # Headers: [discord_id, from, to, employee_id, name, status]
     target_ts = datetime.combine(target_date, datetime.min.time()).timestamp()
     
     for row in rows[1:]:
         if len(row) < 3: continue
         
         match = False
-        if tg_id and str(row[0]) == str(tg_id):
+        if discord_id and str(row[0]) == str(discord_id):
             match = True
         elif emp_id and len(row) > 3 and str(row[3]) == str(emp_id):
             match = True

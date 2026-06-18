@@ -33,7 +33,6 @@ from sheets_service import (
     batch_update_wfh_statuses,
     get_active_employees,
 )
-from telegram_bot import handle_webhook
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secure-workforce-session-secret-key-1029'
@@ -329,20 +328,6 @@ def stream():
     return Response(event_stream(), mimetype="text/event-stream")
 
 
-# =========================
-# TELEGRAM WEBHOOK
-# =========================
-@app.route("/telegram/webhook", methods=["POST"])
-def telegram_webhook():
-    try:
-        update = request.json
-        if update:
-            handle_webhook(update)
-        return "OK", 200
-    except Exception as e:
-        print(f"[Telegram Webhook] Error: {e}")
-        return "ERROR", 500
-
 
 # =========================
 # AUTH ROUTES
@@ -509,12 +494,12 @@ def handle_request_action():
                 status
             )
             
-            # Notify user via Telegram (only for final decisions)
+            # Notify user via Discord (only for final decisions)
             if action != "pending":
-                from telegram_bot import send_message
+                from discord_bot import send_discord_message_sync
                 emoji = "🎉" if status == "approved" else "😔"
                 msg = f"{emoji} Your WFH request from {request_data['from']} to {request_data['to']} has been {status.upper()}."
-                send_message(request_data['tg_id'], msg)
+                send_discord_message_sync(request_data['discord_id'], msg)
             
             return jsonify({"success": True, "message": f"Request status set to {status}"})
             
@@ -527,11 +512,11 @@ def handle_request_action():
             batch_update_wfh_statuses(pending, status)
             
             # Notify users in background
-            from telegram_bot import send_message
+            from discord_bot import send_discord_message_sync
             for req in pending:
                 emoji = "🎉" if status == "approved" else "😔"
                 msg = f"{emoji} Your WFH request from {req['from']} to {req['to']} has been {status.upper()}."
-                send_message(req['tg_id'], msg)
+                send_discord_message_sync(req['discord_id'], msg)
                 
             return jsonify({"success": True, "message": f"All requests {status}"})
             
@@ -550,4 +535,11 @@ if __name__ == "__main__":
     scheduler = threading.Thread(target=_midnight_scheduler, daemon=True, name="MidnightScheduler")
     scheduler.start()
     print("[App] Midnight scheduler started.")
+    
+    # Start the Discord Bot in a background thread
+    from discord_bot import run_discord_bot
+    discord_thread = threading.Thread(target=run_discord_bot, daemon=True, name="DiscordBot")
+    discord_thread.start()
+    print("[App] Discord bot thread started.")
+    
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
