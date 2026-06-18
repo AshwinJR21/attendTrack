@@ -26,7 +26,6 @@ ADMIN_IDS = [x.strip() for x in _admin_raw.split(",") if x.strip()]
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
