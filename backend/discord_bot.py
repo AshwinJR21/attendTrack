@@ -46,7 +46,11 @@ class WFHApprovalView(discord.ui.View):
             await interaction.followup.send("Only admins can approve requests.", ephemeral=True)
             return
 
-        update_wfh_status(self.discord_id, self.start_date, self.end_date, "approved")
+        try:
+            await asyncio.to_thread(update_wfh_status, self.discord_id, self.start_date, self.end_date, "approved")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error updating sheet: {e}", ephemeral=True)
+            return
         
         # Disable buttons
         for child in self.children:
@@ -63,7 +67,11 @@ class WFHApprovalView(discord.ui.View):
             await interaction.followup.send("Only admins can reject requests.", ephemeral=True)
             return
 
-        update_wfh_status(self.discord_id, self.start_date, self.end_date, "rejected")
+        try:
+            await asyncio.to_thread(update_wfh_status, self.discord_id, self.start_date, self.end_date, "rejected")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error updating sheet: {e}", ephemeral=True)
+            return
         
         # Disable buttons
         for child in self.children:
@@ -91,11 +99,14 @@ async def start(interaction: discord.Interaction, employee_id: str):
         await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
-    emp_name = register_discord_id(employee_id, interaction.user.id)
-    if emp_name:
-        await interaction.followup.send(f"✅ Success! Welcome {emp_name}. Your account is linked.")
-    else:
-        await interaction.followup.send("❌ Error: Invalid Employee ID.", ephemeral=True)
+    try:
+        emp_name = await asyncio.to_thread(register_discord_id, employee_id, interaction.user.id)
+        if emp_name:
+            await interaction.followup.send(f"✅ Success! Welcome {emp_name}. Your account is linked.")
+        else:
+            await interaction.followup.send("❌ Error: Invalid Employee ID.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Internal Error: {e}", ephemeral=True)
 
 @bot.tree.command(name="in", description="Clock IN for the day")
 async def clock_in(interaction: discord.Interaction):
@@ -104,14 +115,16 @@ async def clock_in(interaction: discord.Interaction):
         await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
-    emp = get_employee_by_discord_id(interaction.user.id)
-    if not emp:
-        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
-        return
-
-    location = "Home" if has_approved_wfh(datetime.date.today(), discord_id=interaction.user.id) else "Office"
     try:
-        timestamp = append_attendance(emp["id"], emp["name"], "IN", location)
+        emp = await asyncio.to_thread(get_employee_by_discord_id, interaction.user.id)
+        if not emp:
+            await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
+            return
+
+        has_wfh = await asyncio.to_thread(has_approved_wfh, datetime.date.today(), discord_id=interaction.user.id)
+        location = "Home" if has_wfh else "Office"
+        
+        timestamp = await asyncio.to_thread(append_attendance, emp["id"], emp["name"], "IN", location)
         await interaction.followup.send(f"✅ Clocked **IN** at {timestamp} from **{location}**.")
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {str(e)}")
@@ -123,14 +136,16 @@ async def clock_out(interaction: discord.Interaction):
         await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
-    emp = get_employee_by_discord_id(interaction.user.id)
-    if not emp:
-        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
-        return
-
-    location = "Home" if has_approved_wfh(datetime.date.today(), discord_id=interaction.user.id) else "Office"
     try:
-        timestamp = append_attendance(emp["id"], emp["name"], "OUT", location)
+        emp = await asyncio.to_thread(get_employee_by_discord_id, interaction.user.id)
+        if not emp:
+            await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
+            return
+
+        has_wfh = await asyncio.to_thread(has_approved_wfh, datetime.date.today(), discord_id=interaction.user.id)
+        location = "Home" if has_wfh else "Office"
+        
+        timestamp = await asyncio.to_thread(append_attendance, emp["id"], emp["name"], "OUT", location)
         await interaction.followup.send(f"✅ Clocked **OUT** at {timestamp} from **{location}**.")
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {str(e)}")
@@ -143,30 +158,37 @@ async def request_wfh(interaction: discord.Interaction, start_date: str, end_dat
         await interaction.followup.send(f"Please use this command in a DM or the designated WFH request channel.", ephemeral=True)
         return
 
-    emp = get_employee_by_discord_id(interaction.user.id)
-    if not emp:
-        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.", ephemeral=True)
-        return
-
     try:
+        emp = await asyncio.to_thread(get_employee_by_discord_id, interaction.user.id)
+        if not emp:
+            await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.", ephemeral=True)
+            return
+
         # Validate dates
         datetime.datetime.strptime(start_date, "%Y-%m-%d")
         datetime.datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Add to WFH requests sheet
+        spreadsheet_id = await asyncio.to_thread(get_master_spreadsheet_id)
+        row = [str(interaction.user.id), start_date, end_date, emp["id"], emp["name"], "pending"]
+        
+        def _append_sheet():
+            retry_api(lambda: service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{WFH_REQUESTS_SHEET}'!A:F",
+                valueInputOption="RAW",
+                body={"values": [row]}
+            ).execute())
+            
+        await asyncio.to_thread(_append_sheet)
+
+        await interaction.followup.send(f"✅ WFH Request submitted from {start_date} to {end_date}. Waiting for admin approval.")
     except ValueError:
         await interaction.followup.send("❌ Invalid date format. Use YYYY-MM-DD.", ephemeral=True)
         return
-
-    # Add to WFH requests sheet
-    spreadsheet_id = get_master_spreadsheet_id()
-    row = [str(interaction.user.id), start_date, end_date, emp["id"], emp["name"], "pending"]
-    retry_api(lambda: service.spreadsheets().values().append(
-        spreadsheetId=spreadsheet_id,
-        range=f"'{WFH_REQUESTS_SHEET}'!A:F",
-        valueInputOption="RAW",
-        body={"values": [row]}
-    ).execute())
-
-    await interaction.followup.send(f"✅ WFH Request submitted from {start_date} to {end_date}. Waiting for admin approval.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Internal Error submitting request: {str(e)}", ephemeral=True)
+        return
 
     # Notify Admins
     admin_msg = f"🔔 **WFH Request**\n**Employee:** {emp['name']}\n**From:** {start_date}\n**To:** {end_date}"
