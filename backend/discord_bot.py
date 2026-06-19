@@ -41,8 +41,9 @@ class WFHApprovalView(discord.ui.View):
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.green, custom_id="approve_wfh")
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         if str(interaction.user.id) not in ADMIN_IDS:
-            await interaction.response.send_message("Only admins can approve requests.", ephemeral=True)
+            await interaction.followup.send("Only admins can approve requests.", ephemeral=True)
             return
 
         update_wfh_status(self.discord_id, self.start_date, self.end_date, "approved")
@@ -50,15 +51,16 @@ class WFHApprovalView(discord.ui.View):
         # Disable buttons
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(content=f"✅ Approved WFH for {self.emp_name} ({self.start_date} to {self.end_date}) by <@{interaction.user.id}>", view=self)
+        await interaction.message.edit(content=f"✅ Approved WFH for {self.emp_name} ({self.start_date} to {self.end_date}) by <@{interaction.user.id}>", view=self)
         
         # Notify User
         await send_discord_message_async(self.discord_id, f"🎉 Your WFH request from {self.start_date} to {self.end_date} has been APPROVED.")
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.red, custom_id="reject_wfh")
     async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         if str(interaction.user.id) not in ADMIN_IDS:
-            await interaction.response.send_message("Only admins can reject requests.", ephemeral=True)
+            await interaction.followup.send("Only admins can reject requests.", ephemeral=True)
             return
 
         update_wfh_status(self.discord_id, self.start_date, self.end_date, "rejected")
@@ -66,7 +68,7 @@ class WFHApprovalView(discord.ui.View):
         # Disable buttons
         for child in self.children:
             child.disabled = True
-        await interaction.response.edit_message(content=f"❌ Rejected WFH for {self.emp_name} ({self.start_date} to {self.end_date}) by <@{interaction.user.id}>", view=self)
+        await interaction.message.edit(content=f"❌ Rejected WFH for {self.emp_name} ({self.start_date} to {self.end_date}) by <@{interaction.user.id}>", view=self)
         
         # Notify User
         await send_discord_message_async(self.discord_id, f"😔 Your WFH request from {self.start_date} to {self.end_date} has been REJECTED.")
@@ -84,62 +86,66 @@ async def on_ready():
 
 @bot.tree.command(name="start", description="Link your Discord account to the Attendance System")
 async def start(interaction: discord.Interaction, employee_id: str):
+    await interaction.response.defer(ephemeral=True)
     if interaction.guild_id is not None:
-        await interaction.response.send_message("Please use this command in a DM.", ephemeral=True)
+        await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
     emp_name = register_discord_id(employee_id, interaction.user.id)
     if emp_name:
-        await interaction.response.send_message(f"✅ Success! Welcome {emp_name}. Your account is linked.")
+        await interaction.followup.send(f"✅ Success! Welcome {emp_name}. Your account is linked.")
     else:
-        await interaction.response.send_message("❌ Error: Invalid Employee ID.", ephemeral=True)
+        await interaction.followup.send("❌ Error: Invalid Employee ID.", ephemeral=True)
 
 @bot.tree.command(name="in", description="Clock IN for the day")
 async def clock_in(interaction: discord.Interaction):
+    await interaction.response.defer()
     if interaction.guild_id is not None:
-        await interaction.response.send_message("Please use this command in a DM.", ephemeral=True)
+        await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
     emp = get_employee_by_discord_id(interaction.user.id)
     if not emp:
-        await interaction.response.send_message("❌ You are not linked. Use `/start <employee_id>` first.")
+        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
         return
 
     location = "Home" if has_approved_wfh(datetime.date.today(), discord_id=interaction.user.id) else "Office"
     try:
         timestamp = append_attendance(emp["id"], emp["name"], "IN", location)
-        await interaction.response.send_message(f"✅ Clocked **IN** at {timestamp} from **{location}**.")
+        await interaction.followup.send(f"✅ Clocked **IN** at {timestamp} from **{location}**.")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {str(e)}")
+        await interaction.followup.send(f"❌ Error: {str(e)}")
 
 @bot.tree.command(name="out", description="Clock OUT for the day")
 async def clock_out(interaction: discord.Interaction):
+    await interaction.response.defer()
     if interaction.guild_id is not None:
-        await interaction.response.send_message("Please use this command in a DM.", ephemeral=True)
+        await interaction.followup.send("Please use this command in a DM.", ephemeral=True)
         return
 
     emp = get_employee_by_discord_id(interaction.user.id)
     if not emp:
-        await interaction.response.send_message("❌ You are not linked. Use `/start <employee_id>` first.")
+        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.")
         return
 
     location = "Home" if has_approved_wfh(datetime.date.today(), discord_id=interaction.user.id) else "Office"
     try:
         timestamp = append_attendance(emp["id"], emp["name"], "OUT", location)
-        await interaction.response.send_message(f"✅ Clocked **OUT** at {timestamp} from **{location}**.")
+        await interaction.followup.send(f"✅ Clocked **OUT** at {timestamp} from **{location}**.")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Error: {str(e)}")
+        await interaction.followup.send(f"❌ Error: {str(e)}")
 
 @bot.tree.command(name="wfh", description="Request Work From Home")
 async def request_wfh(interaction: discord.Interaction, start_date: str, end_date: str):
+    await interaction.response.defer()
     is_valid_channel = (interaction.guild_id is None) or (str(interaction.channel_id) == REQUEST_CHANNEL_ID)
     if not is_valid_channel:
-        await interaction.response.send_message(f"Please use this command in a DM or the designated WFH request channel.", ephemeral=True)
+        await interaction.followup.send(f"Please use this command in a DM or the designated WFH request channel.", ephemeral=True)
         return
 
     emp = get_employee_by_discord_id(interaction.user.id)
     if not emp:
-        await interaction.response.send_message("❌ You are not linked. Use `/start <employee_id>` first.", ephemeral=True)
+        await interaction.followup.send("❌ You are not linked. Use `/start <employee_id>` first.", ephemeral=True)
         return
 
     try:
@@ -147,7 +153,7 @@ async def request_wfh(interaction: discord.Interaction, start_date: str, end_dat
         datetime.datetime.strptime(start_date, "%Y-%m-%d")
         datetime.datetime.strptime(end_date, "%Y-%m-%d")
     except ValueError:
-        await interaction.response.send_message("❌ Invalid date format. Use YYYY-MM-DD.", ephemeral=True)
+        await interaction.followup.send("❌ Invalid date format. Use YYYY-MM-DD.", ephemeral=True)
         return
 
     # Add to WFH requests sheet
@@ -160,7 +166,7 @@ async def request_wfh(interaction: discord.Interaction, start_date: str, end_dat
         body={"values": [row]}
     ).execute())
 
-    await interaction.response.send_message(f"✅ WFH Request submitted from {start_date} to {end_date}. Waiting for admin approval.")
+    await interaction.followup.send(f"✅ WFH Request submitted from {start_date} to {end_date}. Waiting for admin approval.")
 
     # Notify Admins
     admin_msg = f"🔔 **WFH Request**\n**Employee:** {emp['name']}\n**From:** {start_date}\n**To:** {end_date}"
