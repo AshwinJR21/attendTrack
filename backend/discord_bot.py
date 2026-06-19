@@ -124,7 +124,7 @@ async def clock_in(interaction: discord.Interaction):
         has_wfh = await asyncio.to_thread(has_approved_wfh, datetime.date.today(), discord_id=interaction.user.id)
         location = "Home" if has_wfh else "Office"
         
-        timestamp = await asyncio.to_thread(append_attendance, emp["id"], emp["name"], "IN", location)
+        timestamp = await asyncio.to_thread(append_attendance, emp.get("employee_id", emp.get("id")), emp["name"], "IN", location)
         await interaction.followup.send(f"✅ Clocked **IN** at {timestamp} from **{location}**.")
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {str(e)}")
@@ -145,7 +145,7 @@ async def clock_out(interaction: discord.Interaction):
         has_wfh = await asyncio.to_thread(has_approved_wfh, datetime.date.today(), discord_id=interaction.user.id)
         location = "Home" if has_wfh else "Office"
         
-        timestamp = await asyncio.to_thread(append_attendance, emp["id"], emp["name"], "OUT", location)
+        timestamp = await asyncio.to_thread(append_attendance, emp.get("employee_id", emp.get("id")), emp["name"], "OUT", location)
         await interaction.followup.send(f"✅ Clocked **OUT** at {timestamp} from **{location}**.")
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {str(e)}")
@@ -170,7 +170,7 @@ async def request_wfh(interaction: discord.Interaction, start_date: str, end_dat
         
         # Add to WFH requests sheet
         spreadsheet_id = await asyncio.to_thread(get_master_spreadsheet_id)
-        row = [str(interaction.user.id), start_date, end_date, emp["id"], emp["name"], "pending"]
+        row = [str(interaction.user.id), start_date, end_date, emp.get("employee_id", emp.get("id")), emp["name"], "pending"]
         
         def _append_sheet():
             retry_api(lambda: service.spreadsheets().values().append(
