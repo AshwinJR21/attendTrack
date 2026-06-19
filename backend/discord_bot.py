@@ -14,7 +14,9 @@ from sheets_service import (
     retry_api,
     service,
     update_wfh_status,
-    has_approved_wfh
+    has_approved_wfh,
+    get_pending_wfh_requests,
+    batch_update_wfh_statuses
 )
 import datetime
 
@@ -80,6 +82,47 @@ class WFHApprovalView(discord.ui.View):
         
         # Notify User
         await send_discord_message_async(self.discord_id, f"😔 Your WFH request from {self.start_date} to {self.end_date} has been REJECTED.")
+
+class WFHBatchApprovalView(discord.ui.View):
+    def __init__(self, pending_requests):
+        super().__init__(timeout=None)
+        self.pending_requests = pending_requests
+
+    @discord.ui.button(label="Approve All", style=discord.ButtonStyle.green, custom_id="approve_all_wfh")
+    async def approve_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if str(interaction.user.id) not in ADMIN_IDS:
+            await interaction.followup.send("Only admins can do this.", ephemeral=True)
+            return
+
+        try:
+            await asyncio.to_thread(batch_update_wfh_statuses, self.pending_requests, "approved")
+            for req in self.pending_requests:
+                discord_id = req.get("discord_id", req.get("tg_id"))
+                await send_discord_message_async(discord_id, f"🎉 Your WFH request from {req['from']} to {req['to']} has been APPROVED.")
+            for child in self.children:
+                child.disabled = True
+            await interaction.message.edit(content=f"✅ Approved all {len(self.pending_requests)} pending requests by <@{interaction.user.id}>", view=self)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Reject All", style=discord.ButtonStyle.red, custom_id="reject_all_wfh")
+    async def reject_all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        if str(interaction.user.id) not in ADMIN_IDS:
+            await interaction.followup.send("Only admins can do this.", ephemeral=True)
+            return
+
+        try:
+            await asyncio.to_thread(batch_update_wfh_statuses, self.pending_requests, "rejected")
+            for req in self.pending_requests:
+                discord_id = req.get("discord_id", req.get("tg_id"))
+                await send_discord_message_async(discord_id, f"😔 Your WFH request from {req['from']} to {req['to']} has been REJECTED.")
+            for child in self.children:
+                child.disabled = True
+            await interaction.message.edit(content=f"❌ Rejected all {len(self.pending_requests)} pending requests by <@{interaction.user.id}>", view=self)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
 @bot.event
 async def on_ready():
@@ -209,6 +252,36 @@ async def request_wfh(interaction: discord.Interaction, start_date: str, end_dat
             await admin_channel.send(admin_msg, view=view)
         except Exception as e:
             print(f"[Discord] Failed to send to admin channel {ADMIN_CHANNEL_ID}: {e}")
+
+@bot.tree.command(name="pending", description="[Admin] List all pending WFH requests")
+async def pending_wfh(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    if str(interaction.user.id) not in ADMIN_IDS:
+        await interaction.followup.send("Only admins can use this command.", ephemeral=True)
+        return
+        
+    try:
+        pending = await asyncio.to_thread(get_pending_wfh_requests)
+        if not pending:
+            await interaction.followup.send("No pending WFH requests at this time.")
+            return
+            
+        await interaction.followup.send(f"Found {len(pending)} pending request(s). Sending them below...", ephemeral=True)
+        
+        # Send individual requests
+        for req in pending:
+            discord_id = str(req.get("discord_id", req.get("tg_id")))
+            msg = f"🔔 **Pending WFH Request**\n**Employee:** {req['name']}\n**From:** {req['from']}\n**To:** {req['to']}"
+            view = WFHApprovalView(discord_id, req['from'], req['to'], req['name'])
+            await interaction.followup.send(msg, view=view, ephemeral=True)
+            
+        # Send batch action
+        if len(pending) > 1:
+            batch_view = WFHBatchApprovalView(pending)
+            await interaction.followup.send("**Batch Actions:**", view=batch_view, ephemeral=True)
+            
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
 async def send_discord_message_async(target_id: str, message: str):
     """Internal async helper to send a message to a user or channel."""
